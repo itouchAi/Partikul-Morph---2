@@ -6,7 +6,7 @@ import { ClockWidget } from './components/ClockWidget';
 import { Screensaver } from './components/Screensaver';
 import { LyricsBox } from './components/LyricsBox';
 import { PresetType, AudioMode, BackgroundMode, BgImageStyle, ShapeType, SlideshowSettings, LyricLine, SlideshowTransition } from './types';
-import { getSongImages, saveSongImages } from './utils/db'; // Import DB Utils
+import { getSongImages, saveSongImages, getSongLyrics, saveSongLyrics } from './utils/db'; // Import DB Utils Updated
 
 // Ekran Koruyucu Durumları (Kesin Sıralı - 5 Adım)
 type ScreensaverState = 
@@ -355,31 +355,33 @@ const App: React.FC = () => {
                 }
                 
                 // Sözler ayarlandı
+                let finalLyrics: LyricLine[] = [];
                 if (formattedLyrics.length === 0) {
                     if (rawLyrics.length > 0) {
                         const filteredRaw = rawLyrics.filter(l => !l.text.includes('[Müzik]') && !l.text.includes('[Music]'));
-                        setLyrics(filteredRaw.length > 0 ? filteredRaw : [{ text: "...", start: 0, end: 5 }]);
-                    } else setLyrics([{ text: "...", start: 0, end: 5 }]);
-                } else setLyrics(formattedLyrics);
+                        finalLyrics = filteredRaw.length > 0 ? filteredRaw : [{ text: "...", start: 0, end: 5 }];
+                    } else finalLyrics = [{ text: "...", start: 0, end: 5 }];
+                } else finalLyrics = formattedLyrics;
                 
+                setLyrics(finalLyrics);
                 setIsAnalyzing(false); 
                 setUseLyricParticles(true);
-
-                // --- GÖRSEL ÜRETİMİNİ TETİKLE ---
-                // Kullanıcıya hemen bilgi ver
-                setAnalysisStatus('Analiz Tamamlandı!');
-                setStatus('loading', 'Görsel Üretimi Başlatılıyor...');
 
                 // Use the Ref instead of the state directly to avoid stale closures
                 const currentTitle = audioTitleRef.current;
 
                 if (currentTitle) {
+                    // *** YENİ: Sözleri Kaydet ***
+                    saveSongLyrics(currentTitle, finalLyrics).catch(e => console.error("Lyrics save error", e));
+
+                    // --- GÖRSEL ÜRETİMİNİ TETİKLE ---
+                    // Kullanıcıya hemen bilgi ver
+                    setAnalysisStatus('Analiz Tamamlandı!');
+                    setStatus('loading', 'Görsel Üretimi Başlatılıyor...');
+
                     // Verinin worker'dan gelmesi bazen anlık olabiliyor, string birleştirmeyi garantiye alalım
                     const finalLyricsText = fullTextForImage || "";
                     
-                    // Closure probleminden kaçınmak için fonksiyonu doğrudan çağırıyoruz (state'e güvenmek yerine)
-                    // Ancak App component fonksiyonu içinde olduğumuz için generateBackgrounds'a erişimimiz var.
-                    // Timeout ile UI render'a izin veriyoruz.
                     setTimeout(() => {
                          console.log("Calling generateBackgrounds with:", currentTitle);
                          generateBackgrounds(finalLyricsText, currentTitle).catch(e => {
@@ -406,6 +408,34 @@ const App: React.FC = () => {
   // --- Audio Analysis Function (Isolated) ---
   const analyzeAudio = async (url: string, lang: string = 'turkish', analysisId: number) => {
       if (analysisId !== analysisIdRef.current) return;
+
+      // Use Ref for current title
+      const currentTitle = audioTitleRef.current;
+
+      // *** CACHE CHECK START ***
+      if (currentTitle) {
+          try {
+              const cachedLyrics = await getSongLyrics(currentTitle);
+              if (cachedLyrics && cachedLyrics.length > 0) {
+                  console.log("Lyrics loaded from cache for:", currentTitle);
+                  
+                  // Load lyrics
+                  setLyrics(cachedLyrics);
+                  setUseLyricParticles(true);
+                  setAnalysisStatus('Hafızadan Yüklendi');
+                  
+                  // Trigger image loading (it will check cache internally)
+                  // Reconstruct text for prompt if needed (less important if images are cached)
+                  const lyricsText = cachedLyrics.map((l: any) => l.text).join(' ');
+                  generateBackgrounds(lyricsText, currentTitle);
+                  
+                  return; // EXIT FUNCTION EARLY - Do not run Worker
+              }
+          } catch (e) {
+              console.error("Cache check error:", e);
+          }
+      }
+      // *** CACHE CHECK END ***
 
       setIsAnalyzing(true); 
       initWorker();
