@@ -142,6 +142,7 @@ const App: React.FC = () => {
   
   // --- Song Info State ---
   const [songInfo, setSongInfo] = useState<SongInfo | null>(null);
+  const [showInfoPanel, setShowInfoPanel] = useState<boolean>(true); // User toggle for info panel
 
   const [audioCurrentTime, setAudioCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
@@ -223,20 +224,24 @@ const App: React.FC = () => {
       try {
           const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
           
+          // Escape quotes in lyrics to prevent prompt injection or confusion
+          const safeLyrics = lyricsText ? lyricsText.slice(0, 500).replace(/"/g, "'").replace(/\n/g, " ") : "";
+
           const prompt = `
-            Analyze the song "${songTitle}" based on its title and these lyrics: "${lyricsText.slice(0, 500)}...".
+            You are a music metadata API.
+            Analyze the song "${songTitle}" based on its title and the following lyrics snippet:
+            "${safeLyrics}..."
             
-            Task 1: Identify the Artist. 
-            - Find the real artist of this song.
-            - If it is a famous song, provide the Artist Name, Birthplace and Age (or Death Year).
-            - If unknown or AI generated, set artistName as "${songTitle}" and artistBio as "Bilinmeyen Sanatçı".
+            Task 1: Identify the Artist using Google Search.
+            - If famous, provide Artist Name, Birthplace and Age (or Death Year).
+            - If unknown or AI generated, set artistName="${songTitle}" and artistBio="Bilinmeyen Sanatçı".
             - DO NOT use the term "AI Artist" or "Yapay Zeka Sanatçısı" as a name.
 
             Task 2: Explain the meaning.
             - Provide a deep 2-sentence explanation in Turkish.
             - Provide a deep 2-sentence explanation in English.
 
-            Return a valid JSON object ONLY (no markdown formatting), with this structure:
+            Output strictly valid JSON ONLY (no markdown formatting, no conversational text):
             {
                 "artistName": "String",
                 "artistBio": "String",
@@ -258,20 +263,23 @@ const App: React.FC = () => {
 
           const rawText = response.text || '{}';
           // Clean potential markdown blocks if the model adds them despite instructions
-          const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+          let cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+          
+          // Robustly extract JSON block if there is extra text
+          const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+              cleanJson = jsonMatch[0];
+          } else {
+              // If no JSON block is found, throw to trigger fallback
+              throw new Error("No JSON object found in response");
+          }
           
           let info;
           try {
             info = JSON.parse(cleanJson);
           } catch (parseError) {
-            console.warn("JSON Parse failed, trying loose parsing", rawText);
-            // Fallback: try to find JSON object in text
-            const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                info = JSON.parse(jsonMatch[0]);
-            } else {
-                throw parseError;
-            }
+            console.warn("JSON Parse failed", parseError);
+            throw parseError;
           }
 
           const finalInfo: SongInfo = {
@@ -294,8 +302,8 @@ const App: React.FC = () => {
               ...prev,
               artistName: songTitle,
               artistBio: "Bilgi bulunamadı",
-              meaningTR: "Şarkı analizi yapılamadı.",
-              meaningEN: "Analysis failed.",
+              meaningTR: "Şarkı analizi yapılamadı veya bağlantı hatası.",
+              meaningEN: "Analysis failed or connection error.",
               isAiGenerated: true
           } : null);
       }
@@ -848,6 +856,9 @@ const App: React.FC = () => {
   
   // *** MODIFIED HANDLE AUDIO CHANGE: Checks Cache FIRST ***
   const handleAudioChange = async (mode: AudioMode, url: string | null, title?: string, lang?: string) => { 
+      // Clean title from extensions like .mp3, .wav etc.
+      const cleanTitle = title ? title.replace(/\.(mp3|wav|ogg|m4a|flac)$/i, '') : null;
+
       // 1. New Version ID -> Kills old player
       const newAnalysisId = analysisIdRef.current + 1;
       analysisIdRef.current = newAnalysisId;
@@ -867,15 +878,16 @@ const App: React.FC = () => {
       // 4. Update State (Basic Audio)
       setAudioMode(mode); 
       setAudioUrl(url); 
-      setAudioTitle(title || null); 
+      setAudioTitle(cleanTitle); 
       setIsPlaying(true);
 
       // 5. CACHE CHECK & LOGIC
-      if (mode === 'file' && url && title) {
+      if (mode === 'file' && url && cleanTitle) {
           
           // EXTRACT COVER ART IF FILE
           if (audioInputRef.current?.files?.[0]) {
               const file = audioInputRef.current.files[0];
+              // Check against original filename, not cleaned title
               if (file.name === title) {
                   extractCoverArt(file).then(cover => {
                       setSongInfo(prev => prev ? { ...prev, coverArt: cover } : null);
@@ -886,9 +898,9 @@ const App: React.FC = () => {
           // ** IMMEDIATE CACHE CHECK **
           try {
               const [cachedLyrics, cachedInfo, cachedImages] = await Promise.all([
-                  getSongLyrics(title),
-                  getSongInfo(title),
-                  getSongImages(title)
+                  getSongLyrics(cleanTitle),
+                  getSongInfo(cleanTitle),
+                  getSongImages(cleanTitle)
               ]);
 
               if (cachedLyrics && cachedLyrics.length > 0) {
@@ -910,7 +922,7 @@ const App: React.FC = () => {
                   } else {
                       // Info missing, generate partial
                       setSongInfo({
-                          artistName: title.split('-')[0]?.trim() || "Yükleniyor...",
+                          artistName: cleanTitle.split('-')[0]?.trim() || "Yükleniyor...",
                           artistBio: "Bilgi bulunamadı",
                           meaningTR: "Daha önce analiz edilmiş ancak detaylar eksik.",
                           meaningEN: "Previously analyzed but details missing.",
@@ -934,7 +946,7 @@ const App: React.FC = () => {
           setGeneratedPrompts([]);
           
           setSongInfo({
-              artistName: title?.split('-')[0]?.trim() || "Yükleniyor...",
+              artistName: cleanTitle?.split('-')[0]?.trim() || "Yükleniyor...",
               artistBio: "Analiz Ediliyor...",
               meaningTR: "...",
               meaningEN: "...",
@@ -966,7 +978,13 @@ const App: React.FC = () => {
   const handleShapeChange = (shape: ShapeType) => { setCurrentShape(shape); setCurrentText(''); setImageSourceXY(null); setImageSourceYZ(null); setUseImageColors(false); setDepthIntensity(0); setIsSceneVisible(true); setShowLyrics(false); };
   const handleResetAll = () => {
     setCurrentText(''); setParticleColor('#ffffff'); setImageSourceXY(null); setImageSourceYZ(null); setUseImageColors(false); setDepthIntensity(0); setActivePreset('none'); setAudioMode('none'); setAudioUrl(null); setAudioTitle(null); setIsPlaying(true); setRepulsionStrength(50); setRepulsionRadius(50); setParticleCount(40000); setParticleSize(20); setModelDensity(50); setIsDrawing(false); setCanvasRotation([0, 0, 0]); setCurrentShape('sphere'); setCameraResetTrigger(prev => prev + 1); setBgMode('dark'); setIsSceneVisible(true); setBgImage(null); setCroppedBgImage(null); setSlideshowSettings(prev => ({...prev, active: false})); setIsAutoRotating(false); setShowLyrics(false); setLyrics([]); setIsAnalyzing(false); setUseLyricParticles(false); setActiveLyricText(''); setUseLyricEcho(false); setGeneratedImages([]); setGeneratedPrompts([]); setImageGenStatus({state:'idle', message:''}); setSongInfo(null);
+    
+    // CRITICAL: Clear file inputs to allow re-uploading the same file
+    if (audioInputRef.current) audioInputRef.current.value = '';
+    // Force re-render of audio element to clear source
+    setAudioVersion(v => v + 1);
   };
+  
   const rotateCanvasX = () => setCanvasRotation(prev => [prev[0] + Math.PI / 2, prev[1], prev[2]]);
   const rotateCanvasY = () => setCanvasRotation(prev => [prev[0], prev[1] + Math.PI / 2, prev[2]]);
   const rotateCanvasZ = () => setCanvasRotation(prev => [prev[0], prev[1], prev[2] + Math.PI / 2]);
@@ -1178,6 +1196,8 @@ const App: React.FC = () => {
                 // PASSING THE REF TO AUDIO INPUT FOR COVER ART EXTRACTION
                 ref={audioInputRef} // Note: This ref needs to be passed differently or context used, but for simplicity here we assume internal state
                 songInfo={songInfo} // New Prop
+                showInfoPanel={showInfoPanel} // Control disk visibility
+                onToggleInfoPanel={() => setShowInfoPanel(!showInfoPanel)}
             />
           </div>
       </div>

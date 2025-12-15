@@ -113,7 +113,239 @@ interface UIOverlayProps {
   
   // Song Info
   songInfo?: SongInfo | null;
+  showInfoPanel?: boolean;
+  onToggleInfoPanel?: () => void;
 }
+
+// --- DECK COMPONENT ---
+// Updated to accept activeIndex as prop
+const ImageDeck: React.FC<{
+    images: string[];
+    activeIndex: number;
+    onIndexChange: (index: number) => void;
+    onSelect: (img: string) => void;
+    onRemove: (img: string) => void;
+    onHover?: (img: string) => void;
+    side: 'left' | 'right';
+    isUIHidden: boolean;
+    hideInCleanMode: boolean;
+    extraButtons?: React.ReactNode;
+}> = ({ images, activeIndex, onIndexChange, onSelect, onRemove, onHover, side, isUIHidden, hideInCleanMode, extraButtons }) => {
+    const [expanded, setExpanded] = useState(false);
+    const [scrollOffset, setScrollOffset] = useState(0);
+    
+    // Animation States
+    const [animState, setAnimState] = useState<'idle' | 'next' | 'prev'>('idle');
+    const animTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Deck Constants
+    const VISIBLE_STACK = 3;
+    const EXPANDED_VISIBLE_COUNT = 6;
+    const CARD_HEIGHT = 70;
+    
+    // Derived Active Image (used for render keys mostly)
+    // const activeImage = images.length > 0 ? images[activeIndex % images.length] : null;
+
+    useEffect(() => {
+        if (images.length === 0 && activeIndex !== 0) onIndexChange(0);
+    }, [images.length]);
+
+    const handleWheel = (e: React.WheelEvent) => {
+        e.stopPropagation();
+        if (images.length <= 1) return;
+
+        if (expanded) {
+            // Scroll the list window
+            if (images.length <= EXPANDED_VISIBLE_COUNT) return;
+            const dir = e.deltaY > 0 ? 1 : -1;
+            setScrollOffset(prev => {
+                const maxOffset = Math.max(0, images.length - EXPANDED_VISIBLE_COUNT);
+                return Math.max(0, Math.min(maxOffset, prev + dir));
+            });
+        } else {
+            // Cycle the deck
+            if (animState !== 'idle') return;
+
+            const dir = e.deltaY > 0 ? 'next' : 'prev';
+            setAnimState(dir);
+
+            if (animTimeoutRef.current) clearTimeout(animTimeoutRef.current);
+
+            // Wait for animation to finish before updating index
+            animTimeoutRef.current = setTimeout(() => {
+                setAnimState('idle');
+                let nextIndex;
+                if (dir === 'next') nextIndex = (activeIndex + 1) % images.length;
+                else nextIndex = (activeIndex - 1 + images.length) % images.length;
+                
+                onIndexChange(nextIndex);
+            }, 400); // Sync with CSS duration
+        }
+    };
+
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setExpanded(!expanded);
+        // Reset scroll when opening
+        if (!expanded) setScrollOffset(0);
+    };
+
+    const handleCardClick = (e: React.MouseEvent, img: string) => {
+        e.stopPropagation();
+        if (expanded) {
+            onSelect(img);
+            setExpanded(false);
+        } else {
+            // On collapsed click, expand
+            setExpanded(true);
+        }
+    };
+
+    // --- RENDER HELPERS ---
+    const renderCollapsedStack = () => {
+        if (images.length === 0) return null;
+
+        const stackItems = [];
+        const count = Math.min(images.length, VISIBLE_STACK);
+
+        for (let i = 0; i < count; i++) {
+            let logicalIndex = (activeIndex + i) % images.length;
+            
+            let zIndex = 50 - i * 10;
+            let transform = `translateY(${-i * 4}px) translateX(${side === 'left' ? i * 2 : -i * 2}px) scale(${1 - i * 0.05})`;
+            let opacity = 1 - i * 0.2;
+            let className = "deck-card group";
+            
+            // --- ANIMATION LOGIC ---
+            if (animState === 'next') {
+                if (i === 0) {
+                    // Front card throws to back
+                    className += " anim-throw-back";
+                    zIndex = 60; // Stay on top during throw
+                } else {
+                    // Others slide forward
+                    className += " anim-slide-forward";
+                }
+            } else if (animState === 'prev') {
+                // Adjust for prev animation
+                if (i === 0) className += " anim-slide-backward"; 
+                if (i === 1) className += " anim-slide-backward"; 
+            }
+
+            stackItems.push(
+                <div 
+                    key={`stack-${logicalIndex}-${i}`} // Use fixed logic index key to avoid react diff issues during anim?
+                    // Actually, logicalIndex changes when activeIndex changes.
+                    // During animation activeIndex is stable.
+                    className={className}
+                    style={{ 
+                        backgroundImage: `url(${images[logicalIndex]})`,
+                        zIndex,
+                        transform,
+                        opacity
+                    }}
+                    onContextMenu={handleContextMenu}
+                    onClick={(e) => handleCardClick(e, images[logicalIndex])}
+                >
+                    {/* Top card actions */}
+                    {i === 0 && !expanded && extraButtons}
+                </div>
+            );
+        }
+
+        // Special Ghost Card for 'PREV' animation (Flying from back to front)
+        if (animState === 'prev') {
+            const prevIndex = (activeIndex - 1 + images.length) % images.length;
+            stackItems.push(
+                <div
+                    key="ghost-prev"
+                    className="deck-card anim-fetch-front"
+                    style={{
+                        backgroundImage: `url(${images[prevIndex]})`,
+                        zIndex: 100, // On top
+                    }}
+                />
+            );
+        }
+
+        return <div className="relative w-full h-full perspective-[500px]">{stackItems}</div>;
+    };
+
+    const renderExpandedList = () => {
+        // Calculate visible slice
+        const visibleImages = images.slice(scrollOffset, scrollOffset + EXPANDED_VISIBLE_COUNT);
+        
+        return (
+            <div className="flex flex-col-reverse gap-2 w-full h-full animate-in slide-in-from-bottom-4 duration-300">
+                {visibleImages.map((img, idx) => {
+                    const realIdx = scrollOffset + idx;
+                    return (
+                        <div 
+                            key={`exp-${realIdx}`} 
+                            className="w-full h-16 rounded-lg bg-cover bg-center border border-white/20 hover:border-blue-400 hover:scale-105 transition-all shadow-lg relative group cursor-pointer shrink-0"
+                            style={{ backgroundImage: `url(${img})` }}
+                            onClick={(e) => handleCardClick(e, img)}
+                            onMouseEnter={() => onHover && onHover(img)}
+                        >
+                            {/* Remove Button */}
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onRemove(img); }}
+                                className="absolute -top-2 -right-2 w-5 h-5 bg-red-600 rounded-full text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm z-10 hover:bg-red-500"
+                            >
+                                -
+                            </button>
+                            {realIdx === activeIndex && <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none"></div>}
+                        </div>
+                    );
+                })}
+                {images.length > EXPANDED_VISIBLE_COUNT && (
+                    <div className="absolute -right-3 top-0 bottom-0 w-1 bg-white/10 rounded-full">
+                        <div 
+                            className="w-full bg-white/50 rounded-full absolute transition-all"
+                            style={{ 
+                                height: `${(EXPANDED_VISIBLE_COUNT / images.length) * 100}%`,
+                                top: `${(scrollOffset / images.length) * 100}%`
+                            }}
+                        />
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const shouldHide = isUIHidden && hideInCleanMode;
+    const containerClass = shouldHide ? "translate-y-[200%] opacity-0 pointer-events-none" : "translate-y-0 opacity-100";
+    
+    useEffect(() => {
+        if(expanded) {
+            const close = () => setExpanded(false);
+            window.addEventListener('click', close);
+            return () => window.removeEventListener('click', close);
+        }
+    }, [expanded]);
+
+    return (
+        <div 
+            className={`absolute bottom-24 w-24 h-16 transition-all duration-500 ease-in-out z-[55] ${side === 'left' ? 'right-48' : 'right-6'} ${containerClass}`}
+            onWheel={handleWheel}
+            onClick={(e) => e.stopPropagation()} 
+        >
+            {expanded ? (
+                <div 
+                    className="absolute bottom-0 w-28 flex flex-col p-2 bg-black/80 backdrop-blur-xl rounded-xl border border-white/10 max-h-[80vh]"
+                    style={{ transform: 'translateX(-8px)' }}
+                >
+                    <div className="text-[10px] text-white/50 text-center mb-1 font-mono">{scrollOffset + 1}-{Math.min(scrollOffset + EXPANDED_VISIBLE_COUNT, images.length)} / {images.length}</div>
+                    {renderExpandedList()}
+                </div>
+            ) : (
+                renderCollapsedStack()
+            )}
+        </div>
+    );
+};
+
 
 export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({ 
   onSubmit, 
@@ -188,7 +420,9 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
   onToggleLyricEcho,
   generatedImages = [],
   generatedPrompts = [],
-  songInfo
+  songInfo,
+  showInfoPanel = true,
+  onToggleInfoPanel
 }, ref) => {
   const [inputValue, setInputValue] = useState('');
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -216,18 +450,21 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
   // Song Info Panel State
   const [isInfoExpanded, setIsInfoExpanded] = useState(false);
 
-  // Background Deck State
-  const [deckIndex, setDeckIndex] = useState(0);
+  // --- DUAL DECK STATE ---
+  // Re-introduced state to track deck indices
+  const [userDeckIndex, setUserDeckIndex] = useState(0);
+  const [aiDeckIndex, setAiDeckIndex] = useState(0);
+  
+  const [isUserDeckExpanded, setIsUserDeckExpanded] = useState(false);
+  const [isAiDeckExpanded, setIsAiDeckExpanded] = useState(false);
+
+  // Common Deck Settings
   const [deckShowSettings, setDeckShowSettings] = useState(false);
   const [deckHideInCleanMode, setDeckHideInCleanMode] = useState(false);
-  const [animDirection, setAnimDirection] = useState<'next' | 'prev' | null>(null);
   
   // Slideshow UI State
   const [showSlideshowPanel, setShowSlideshowPanel] = useState(false);
   const [showTransitionGrid, setShowTransitionGrid] = useState(false);
-
-  // Expanded Deck Mode (Right Click)
-  const [isDeckExpanded, setIsDeckExpanded] = useState(false);
 
   // Reset Menu State
   const [showResetMenu, setShowResetMenu] = useState(false);
@@ -254,9 +491,6 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
   
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   
-  // Preview Ref for hover logic
-  const prevBgRef = useRef<string | null>(null);
-
   const isLightMode = bgMode === 'light';
   const isAnyMenuOpen = isSettingsOpen || isThemeMenuOpen || isShapeMenuOpen || isBgPaletteOpen || isPaletteOpen || showMusicSettings || deckShowSettings || showResetMenu;
 
@@ -273,7 +507,8 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
     setDeckShowSettings(false);
     setShowResetMenu(false);
     setShowSlideshowPanel(false); 
-    if (isDeckExpanded) setIsDeckExpanded(false);
+    if (isUserDeckExpanded) setIsUserDeckExpanded(false);
+    if (isAiDeckExpanded) setIsAiDeckExpanded(false);
     if (isInfoExpanded) setIsInfoExpanded(false); // Close expanded info panel
     onInteractionEnd();
   };
@@ -292,7 +527,13 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
               img.src = src;
           });
       }
-  }, [bgImages]);
+      if (generatedImages && generatedImages.length > 0) {
+          generatedImages.forEach(src => {
+              const img = new Image();
+              img.src = src;
+          })
+      }
+  }, [bgImages, generatedImages]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -429,9 +670,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
 
   const handleGenImageClick = (img: string) => {
       if (onBgImageSelect) onBgImageSelect(img);
-      if (onBgImagesAdd && !bgImages?.includes(img)) {
-          onBgImagesAdd([img]);
-      }
+      // AI görselleri artık kendi destesinde, ama yine de seçilince arka plan oluyor.
   };
   
   const downloadPrompts = () => {
@@ -467,23 +706,36 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
   const hideMusicPlayer = isUIHidden && !musicShowInCleanMode;
   const musicPlayerClass = hideMusicPlayer ? "-translate-y-[200%] opacity-0 pointer-events-none" : "translate-y-0 opacity-100";
 
-  // ... (Remaining Logic for Deck, Cropper, Reset, Slideshow helpers is unchanged)
-  // ... (Re-declaring necessary handlers for brevity if needed, but assuming structure is preserved)
-  const handleDeckContextMenu = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setIsDeckExpanded(!isDeckExpanded); };
-  const handleCardClick = (e: React.MouseEvent, img: string) => { e.stopPropagation(); if (onBgImageSelect) onBgImageSelect(img); const clickedIndex = bgImages?.indexOf(img) ?? -1; if (clickedIndex !== -1) { setDeckIndex(clickedIndex); } if (isDeckExpanded) setIsDeckExpanded(false); };
-  const handleDeckScroll = (e: React.WheelEvent) => { e.stopPropagation(); if (!bgImages || bgImages.length <= 1) return; const direction = e.deltaY > 0 ? 'next' : 'prev'; setAnimDirection(direction); if (direction === 'next') { setTimeout(() => { setDeckIndex(prev => { let nextIdx = prev + 1; if (nextIdx >= bgImages.length) nextIdx = 0; return nextIdx; }); setAnimDirection(null); }, 400); } else { setDeckIndex(prev => { let nextIdx = prev - 1; if (nextIdx < 0) nextIdx = bgImages.length - 1; return nextIdx; }); setTimeout(() => { setAnimDirection(null); }, 500); } };
-  const getDeckImage = (offset: number) => { if (!bgImages || bgImages.length === 0) return null; let idx = (deckIndex + offset) % bgImages.length; if (idx < 0) idx += bgImages.length; return bgImages[idx]; };
-  const shouldHideDeck = isUIHidden && deckHideInCleanMode;
-  const deckClass = shouldHideDeck ? "translate-y-[200%] opacity-0 pointer-events-none" : "translate-y-0 opacity-100";
-  const EXPAND_COUNT = 6; const CARD_HEIGHT = 64; const GAP = 2; const currentActiveImage = getDeckImage(0);
-  const openCropper = (e?: React.MouseEvent) => { if(e) e.stopPropagation(); if(currentActiveImage) { setCropImage(currentActiveImage); setShowCropper(true); setDeckShowSettings(false); setCropOffset({x: 0, y: 0}); setCropScale(1); } };
+  const handleBgImageSelectFromDeck = (img: string) => {
+      if (onBgImageSelect) onBgImageSelect(img);
+  };
+
+  // Safe accessor for user deck cropping
+  const currentUserActiveImage = bgImages && bgImages.length > 0 ? bgImages[userDeckIndex % bgImages.length] : null;
+
+  const openCropper = (e?: React.MouseEvent) => { 
+      if(e) e.stopPropagation(); 
+      if(currentUserActiveImage) { 
+          setCropImage(currentUserActiveImage); 
+          setShowCropper(true); 
+          setDeckShowSettings(false); 
+          setCropOffset({x: 0, y: 0}); 
+          setCropScale(1); 
+      } 
+  };
+  
   const handleCropMouseDown = (e: React.MouseEvent) => { setIsDraggingCrop(true); setDragStart({ x: e.clientX, y: e.clientY }); setStartOffset({ ...cropOffset }); };
   const handleCropMouseMove = (e: React.MouseEvent) => { if (!isDraggingCrop) return; const dx = e.clientX - dragStart.x; const dy = e.clientY - dragStart.y; setCropOffset({ x: startOffset.x + dx, y: startOffset.y + dy }); };
   const handleCropMouseUp = () => { setIsDraggingCrop(false); };
   const handleCropWheel = (e: React.WheelEvent) => { e.stopPropagation(); const delta = e.deltaY > 0 ? -0.1 : 0.1; setCropScale(prev => Math.max(0.1, Math.min(5, prev + delta))); };
   const confirmCrop = () => { if(onBgTransformChange && cropContainerRef.current && cropImageRef.current) { const img = cropImageRef.current; const frameWidth = Math.min(window.innerWidth * 0.8, 1280); const frameHeight = frameWidth * (9/16); const canvas = document.createElement('canvas'); canvas.width = frameWidth; canvas.height = frameHeight; const ctx = canvas.getContext('2d'); if (ctx) { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.translate(canvas.width / 2, canvas.height / 2); ctx.translate(cropOffset.x, cropOffset.y); ctx.scale(cropScale, cropScale); if(img.complete) { const drawW = img.naturalWidth; const drawH = img.naturalHeight; ctx.drawImage(img, -drawW / 2, -drawH / 2); } const dataUrl = canvas.toDataURL('image/png', 1.0); onBgTransformChange(dataUrl); } } setShowCropper(false); };
+  
   const openResetMenu = (e: React.MouseEvent) => { e.stopPropagation(); setShowResetMenu(true); setDeckShowSettings(false); };
-  const handleResetConfirm = () => { if (onResetDeck) { onResetDeck(resetDeleteAll, resetResetSize); } setShowResetMenu(false); };
+  const handleResetConfirm = () => { 
+      if (onResetDeck) { onResetDeck(resetDeleteAll, resetResetSize); } 
+      if (resetDeleteAll) setUserDeckIndex(0);
+      setShowResetMenu(false); 
+  };
   const toggleSlideshow = () => { if (onSlideshowSettingsChange && slideshowSettings) { onSlideshowSettingsChange(prev => ({ ...prev, active: !prev.active })); } };
   const updateSlideshow = (updates: Partial<SlideshowSettings>) => { if (onSlideshowSettingsChange) { onSlideshowSettingsChange(prev => ({ ...prev, ...updates })); } };
   const TRANSITION_ICONS: Record<SlideshowTransition, React.ReactNode> = { 'random': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l5 5M4 4l5 5"/></svg>, 'slide-left': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>, 'slide-right': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>, 'slide-up': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>, 'slide-down': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>, 'particles': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="4" cy="4" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="4" cy="20" r="2"/><circle cx="12" cy="20" r="2"/><circle cx="20" cy="20" r="2"/></svg>, 'transform': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15 15 0 0 1 0 20"/></svg>, 'fade': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeDasharray="4 4"/></svg>, 'blur': <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg> };
@@ -497,6 +749,11 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
   const toggleInfoExpand = (e: React.MouseEvent) => {
       e.stopPropagation();
       setIsInfoExpanded(!isInfoExpanded);
+  };
+
+  const handleInfoBackdropClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if(isInfoExpanded) setIsInfoExpanded(false);
   };
 
   return (
@@ -538,7 +795,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
             pointer-events: auto;
         }
 
-        /* RESTORED DECK CARD STYLES */
+        /* NEW DECK ANIMATIONS */
         .deck-card {
             position: absolute;
             width: 100%;
@@ -546,32 +803,42 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
             background-size: cover;
             background-position: center;
             border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
             border: 1px solid rgba(255,255,255,0.2);
-            transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
             transform-origin: center bottom;
         }
         
-        .anim-throw-next { animation: throwNext 0.4s forwards; }
-        .anim-extract-from-back { animation: extractBack 0.5s forwards; }
-        
-        @keyframes throwNext {
-            0% { transform: translateY(0) scale(1); opacity: 1; }
-            50% { transform: translateY(-50px) rotate(10deg) scale(1.1); opacity: 0.5; }
-            100% { transform: translateY(20px) rotate(5deg) scale(0.9); opacity: 0; z-index: 0; }
+        /* Throw active card to back */
+        @keyframes throwToBack {
+            0% { transform: translateY(0) scale(1); opacity: 1; z-index: 60; }
+            50% { transform: translateY(-100px) rotate(10deg) scale(1.1); opacity: 0.8; z-index: 60; }
+            51% { z-index: 0; }
+            100% { transform: translateY(0) rotate(0) scale(0.9); opacity: 1; z-index: 0; }
         }
-        @keyframes extractBack {
-            0% { transform: translateY(0) scale(0.8); opacity: 0; }
+        .anim-throw-back { animation: throwToBack 0.4s forwards; }
+
+        /* Generic slide forward for cards behind */
+        @keyframes slideForward {
+            0% { transform: translateY(-4px) scale(0.95); opacity: 0.9; }
             100% { transform: translateY(0) scale(1); opacity: 1; }
         }
+        .anim-slide-forward { animation: slideForward 0.4s forwards; }
 
-        /* Sequential Delays for smooth drop effect */
-        .item-1 { transition-delay: 0.05s; }
-        .item-2 { transition-delay: 0.1s; }
-        .item-3 { transition-delay: 0.15s; }
-        .item-4 { transition-delay: 0.2s; }
-        .item-5 { transition-delay: 0.25s; }
-        .item-6 { transition-delay: 0.3s; }
+        /* Extract from back to front (Scroll Down) */
+        @keyframes fetchFromBack {
+            0% { transform: translateY(20px) scale(0.8); opacity: 0; z-index: 0; }
+            50% { transform: translateY(-50px) rotate(-5deg) scale(1.05); opacity: 1; z-index: 60; }
+            100% { transform: translateY(0) scale(1); opacity: 1; z-index: 60; }
+        }
+        .anim-fetch-front { animation: fetchFromBack 0.4s forwards; }
+
+        /* Generic slide backward */
+        @keyframes slideBackward {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-4px) scale(0.95); opacity: 0.9; }
+        }
+        .anim-slide-backward { animation: slideBackward 0.4s forwards; }
 
         .vinyl-grooves {
             background: repeating-radial-gradient(
@@ -596,13 +863,17 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
       `}</style>
       
       {isAnyMenuOpen && ( <div className="fixed inset-0 z-40 bg-transparent" onPointerDown={closeAllMenus} /> )}
+      
+      {/* Background for expanded info panel - allows closing when clicking outside */}
+      {isInfoExpanded && ( <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm" onClick={handleInfoBackdropClick} /> )}
+
       {/* Hidden inputs */}
       <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
       <input type="file" accept="audio/*" ref={actualAudioInputRef} onChange={handleAudioSelect} className="hidden" />
       <input type="file" accept="image/*" multiple ref={bgImageInputRef} onChange={handleBgImagesSelect} className="hidden" />
 
       {/* --- Song Info Panel (Left Side) --- */}
-      {songInfo && !isDrawing && (
+      {showInfoPanel && !isDrawing && (
           <div 
             onClick={toggleInfoExpand}
             className={`
@@ -611,14 +882,14 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                 ${hideLeftClass}
                 ${isInfoExpanded 
                     ? 'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] z-[200]' 
-                    : `absolute left-20 top-[230px] w-64 ${isLoadingInfo ? 'h-[200px]' : 'h-[420px]'} hover:scale-[1.02] cursor-pointer`
+                    : `absolute left-20 top-[230px] w-64 h-auto min-h-[120px] max-h-[300px] hover:scale-[1.02] cursor-pointer`
                 }
             `}
           >
               <div className={`relative w-full h-full preserve-3d transition-transform duration-1000 ${isInfoExpanded ? 'rotate-y-180' : ''}`}>
                   
-                  {/* --- FRONT FACE --- */}
-                  <div className={`absolute inset-0 w-full h-full backface-hidden rounded-3xl border backdrop-blur-xl shadow-2xl overflow-visible ${isLightMode ? 'bg-white/40 border-black/10 text-black' : 'bg-black/40 border-white/10 text-white'}`}>
+                  {/* --- FRONT FACE (Dynamic Height) --- */}
+                  <div className={`relative w-full h-full backface-hidden rounded-3xl border backdrop-blur-xl shadow-2xl overflow-visible flex flex-col ${isLightMode ? 'bg-white/40 border-black/10 text-black' : 'bg-black/40 border-white/10 text-white'}`}>
                       
                       {/* Vinyl Record Visual (Top Half Out) */}
                       <div className="absolute left-1/2 -translate-x-1/2 -top-16">
@@ -636,28 +907,28 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                       </div>
                       
                       {/* Info Content Container */}
-                      <div className="absolute inset-0 pt-24 px-4 pb-4 flex flex-col items-center justify-start">
-                          <div className="text-center w-full mt-4">
-                              <h3 className={`font-bold leading-tight tracking-tight drop-shadow-sm text-lg line-clamp-2 ${isLoadingInfo ? 'animate-pulse opacity-50' : ''}`}>{songInfo.artistName}</h3>
-                              {/* Hide bio if it's generic AI text */}
-                              {!isUnknownArtist && !isLoadingInfo && (
+                      <div className="pt-20 px-4 pb-4 flex flex-col items-center justify-start flex-grow">
+                          <div className="text-center w-full mt-1">
+                              {/* Display "Analiz Bekleniyor" if songInfo is null */}
+                              <h3 className={`font-bold leading-tight tracking-tight drop-shadow-sm text-lg line-clamp-2 ${isLoadingInfo ? 'animate-pulse opacity-50' : ''}`}>{songInfo ? songInfo.artistName : "Analiz Bekleniyor..."}</h3>
+                              {songInfo && !isUnknownArtist && !isLoadingInfo && (
                                 <p className="opacity-70 font-mono text-[10px] mt-1">{songInfo.artistBio}</p>
                               )}
                           </div>
                           
-                          {!isLoadingInfo && (
+                          {songInfo && !isLoadingInfo && (
                               <>
-                                <div className={`h-px w-2/3 mx-auto my-3 ${isLightMode ? 'bg-black/10' : 'bg-white/10'}`}></div>
+                                <div className={`h-px w-2/3 mx-auto my-3 flex-shrink-0 ${isLightMode ? 'bg-black/10' : 'bg-white/10'}`}></div>
 
-                                <div className="text-left w-full mb-1 flex-1 overflow-hidden">
-                                    <div className="mb-2">
-                                        <span className="font-bold opacity-50 uppercase tracking-widest block mb-0.5 text-[9px]">Anlamı (TR)</span>
-                                        <p className="leading-snug opacity-90 italic text-[11px] line-clamp-6">"{songInfo.meaningTR}"</p>
+                                <div className="text-left w-full mb-1 flex flex-col gap-2">
+                                    <div>
+                                        <span className="font-bold opacity-50 uppercase tracking-widest block mb-0.5 text-[9px]">Şarkı Analizi</span>
+                                        <p className="leading-snug opacity-90 italic text-[11px] line-clamp-4 break-words">"{songInfo.meaningTR}"</p>
                                     </div>
                                 </div>
                                 
                                 {songInfo.isAiGenerated && (
-                                    <div className="pt-2 mt-auto">
+                                    <div className="pt-2 mt-auto self-center">
                                         <span className="inline-block px-2 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30">AI ANALİZİ</span>
                                     </div>
                                 )}
@@ -677,22 +948,24 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                       
                       {/* Sticky Header */}
                       <div className={`p-8 pb-4 z-20 flex-shrink-0 border-b ${isLightMode ? 'border-black/5 bg-white/50' : 'border-white/5 bg-black/50'} backdrop-blur-md`}>
-                          <h2 className="text-3xl font-bold leading-tight">{songInfo.artistName}</h2>
-                          {!isUnknownArtist && <p className="font-mono text-sm opacity-60 mt-1">{songInfo.artistBio}</p>}
+                          <h2 className="text-3xl font-bold leading-tight">{songInfo?.artistName || "Detay Yok"}</h2>
+                          {songInfo && !isUnknownArtist && <p className="font-mono text-sm opacity-60 mt-1">{songInfo.artistBio}</p>}
                       </div>
 
                       {/* Scrollable Content */}
                       <div className="flex-1 p-8 pt-6 overflow-y-auto custom-thin-scrollbar relative z-10">
-                          <div className="space-y-8">
-                              <div>
-                                  <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block">Şarkının Anlamı</h4>
-                                  <p className="text-lg leading-relaxed italic opacity-90">{songInfo.meaningTR}</p>
+                          {songInfo ? (
+                              <div className="space-y-8">
+                                  <div>
+                                      <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block">Şarkı Analizi (TR)</h4>
+                                      <p className="text-lg leading-relaxed italic opacity-90">{songInfo.meaningTR}</p>
+                                  </div>
+                                  <div>
+                                      <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block">Analysis (EN)</h4>
+                                      <p className="text-lg leading-relaxed italic opacity-80">{songInfo.meaningEN}</p>
+                                  </div>
                               </div>
-                              <div>
-                                  <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block">Meaning</h4>
-                                  <p className="text-lg leading-relaxed italic opacity-80">{songInfo.meaningEN}</p>
-                              </div>
-                          </div>
+                          ) : <p className="opacity-50">Henüz analiz verisi yok.</p>}
 
                           <div className="mt-8 pt-8 border-t border-dashed border-opacity-20 border-gray-500 text-center opacity-50 text-xs">
                               Yapay Zeka tarafından analiz edilmiştir.
@@ -704,243 +977,103 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
           </div>
       )}
 
-      {/* --- AI Generated Images Sidebar (Styled Exactly Like Deck Cards) --- */}
-      {((generatedImages && generatedImages.length > 0) || (generatedPrompts && generatedPrompts.length > 0)) && (
-          <div className={`absolute right-6 top-[220px] z-[55] flex flex-col gap-3 transition-transform duration-500 ${hideRightClass}`}>
-              {generatedImages && generatedImages.map((img, idx) => (
-                  <div 
-                    key={idx} 
-                    className="group relative w-24 h-16 bg-cover bg-center rounded-sm border border-white/20 shadow-lg cursor-pointer transition-all duration-300 opacity-60 hover:opacity-100 hover:scale-105 hover:border-blue-400"
-                    style={{ backgroundImage: `url(${img})` }}
-                    onMouseEnter={() => handleGenImageHover(img)}
-                    onClick={() => handleGenImageClick(img)}
-                  >
-                      {/* Overlay & Download Button */}
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-end justify-end p-1">
-                          <button 
-                            onClick={(e) => downloadImage(e, img, idx)}
-                            className="w-5 h-5 bg-black/60 hover:bg-blue-600 text-white rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-200 transform translate-y-1 group-hover:translate-y-0"
-                            title="Resmi İndir"
-                          >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      {/* --- AI GENERATED IMAGES DECK (RIGHT SIDE) --- */}
+      <ImageDeck 
+          images={generatedImages}
+          activeIndex={aiDeckIndex}
+          onIndexChange={setAiDeckIndex}
+          onSelect={onBgImageSelect || (() => {})}
+          onRemove={(img) => {/* AI images maybe don't need delete or use logic */}}
+          onHover={handleGenImageHover}
+          side="right"
+          isUIHidden={isUIHidden}
+          hideInCleanMode={deckHideInCleanMode}
+          extraButtons={
+              !generatedImages || generatedImages.length === 0 ? null : (
+                  <div className="absolute top-1 right-1 w-4 h-4 bg-purple-600 rounded-full flex items-center justify-center text-white/90 text-[8px] font-bold shadow-sm">AI</div>
+              )
+          }
+      />
+
+      {/* BACKGROUND DECK (LEFT) - USER IMAGES */}
+      <ImageDeck
+          images={bgImages}
+          activeIndex={userDeckIndex}
+          onIndexChange={setUserDeckIndex}
+          onSelect={handleBgImageSelectFromDeck}
+          onRemove={onRemoveBgImage || (() => {})}
+          onHover={handleBgImageSelectFromDeck} // Live preview on hover
+          side="left"
+          isUIHidden={isUIHidden}
+          hideInCleanMode={deckHideInCleanMode}
+          extraButtons={
+              <>
+                  <button onClick={(e) => { e.stopPropagation(); setDeckShowSettings(!deckShowSettings); setShowResetMenu(false); }} className="absolute top-1 right-1 w-4 h-4 bg-black/60 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-all duration-200 backdrop-blur-sm"><svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
+                  <button onClick={openResetMenu} className="absolute top-1 left-1 w-4 h-4 bg-red-600/80 rounded-full flex items-center justify-center text-white hover:bg-red-500 opacity-0 group-hover:opacity-100 transition-all duration-200 backdrop-blur-sm"><svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+              </>
+          }
+      />
+
+      {/* Deck Settings Menu (Moved outside for better positioning logic if needed, but attached to user deck) */}
+      {deckShowSettings && (
+          <div className="absolute bottom-40 right-64 mb-4 w-32 bg-[#111]/95 backdrop-blur-xl border border-white/20 rounded-xl p-2 shadow-[0_10px_30px_rgba(0,0,0,0.5)] animate-config-pop origin-bottom z-[60]" onClick={stopProp}>
+              {showSlideshowPanel && slideshowSettings && (
+                  <div className="absolute bottom-full left-0 w-full mb-2 bg-[#111]/95 backdrop-blur-xl border border-white/20 rounded-xl p-2 shadow-xl animate-in slide-in-from-bottom-2 fade-in duration-200 z-[70] origin-bottom">
+                      <h5 className="text-[9px] font-mono text-gray-400 text-center uppercase tracking-widest mb-2 border-b border-white/10 pb-1">Slayt Ayarları</h5>
+                      <div className="flex items-center gap-1 mb-2 bg-white/5 rounded p-1 border border-white/10">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                          <input type="number" min="3" max="300" value={slideshowSettings.duration} onChange={(e) => updateSlideshow({ duration: Math.max(3, Math.min(300, parseInt(e.target.value) || 3)) })} className="w-full bg-transparent text-[10px] text-white text-center outline-none" />
+                          <span className="text-[9px] text-gray-500">sn</span>
+                      </div>
+                      <div className="flex gap-1 mb-2">
+                          <button onClick={() => updateSlideshow({ order: 'random' })} className={`flex-1 py-1 rounded flex justify-center items-center hover:scale-105 transition-all ${slideshowSettings.order === 'random' ? 'bg-blue-600 text-white' : 'bg-white/5 text-gray-400'}`} title="Rastgele"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={slideshowSettings.order === 'random' ? 'animate-spin-slow' : ''}><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l5 5M4 4l5 5"/></svg></button>
+                          <button onClick={() => updateSlideshow({ order: 'sequential' })} className={`flex-1 py-1 rounded flex justify-center items-center hover:scale-105 transition-all ${slideshowSettings.order === 'sequential' ? 'bg-blue-600 text-white' : 'bg-white/5 text-gray-400'}`} title="Sırayla"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
+                      </div>
+                      <div className="relative">
+                          <button onClick={() => setShowTransitionGrid(!showTransitionGrid)} className="w-full py-1.5 rounded bg-white/5 border border-white/10 text-[9px] text-gray-300 hover:bg-white/10 flex items-center justify-between px-2">
+                              <div className="flex items-center gap-1">{TRANSITION_ICONS[slideshowSettings.transition]}<span className="truncate max-w-[60px]">{TRANSITION_NAMES[slideshowSettings.transition]}</span></div>
+                              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${showTransitionGrid ? 'rotate-180' : ''}`}><polyline points="6 9 12 15 18 9"/></svg>
                           </button>
+                          {showTransitionGrid && (
+                              <div className="absolute bottom-full left-0 w-full mb-1 bg-[#111] border border-white/20 rounded-lg p-1 grid grid-cols-3 gap-1 shadow-2xl z-[80]">
+                                  {(Object.keys(TRANSITION_ICONS) as SlideshowTransition[]).map((t) => (
+                                      <button key={t} onClick={() => { updateSlideshow({ transition: t }); setShowTransitionGrid(false); }} className={`w-full aspect-square flex items-center justify-center rounded hover:scale-110 transition-all ${slideshowSettings.transition === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}`} title={TRANSITION_NAMES[t]}><div className="hover:animate-pulse">{TRANSITION_ICONS[t]}</div></button>
+                                  ))}
+                              </div>
+                          )}
                       </div>
                   </div>
-              ))}
-              
-              {/* Download Prompts Button */}
-              {generatedPrompts && generatedPrompts.length > 0 && (
-                 <button 
-                    onClick={downloadPrompts}
-                    className="w-24 h-8 bg-white/10 hover:bg-white/20 border border-white/20 rounded flex items-center justify-center text-[10px] text-white/60 hover:text-white transition-all backdrop-blur-md opacity-60 hover:opacity-100"
-                    title="Promptları İndir (TXT)"
-                 >
-                    <span className="font-mono font-bold tracking-widest">PROMPTS</span>
-                 </button>
               )}
-              <div className="text-[9px] text-white/30 text-center font-mono w-24">AI GALLERY</div>
-          </div>
-      )}
-
-      {/* ... Music Player and other components ... */}
-      {showMusicPlayer && (
-          <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-40 transition-all duration-700 ease-in-out ${musicPlayerClass}`}>
-             <div 
-                className={`relative group rounded-full px-5 py-2 backdrop-blur-md shadow-lg border border-white/10 flex items-center justify-center overflow-visible max-w-[280px] transition-all duration-300 ${isLightMode ? 'bg-black/10 text-black border-black/10' : 'bg-white/10 text-white'}`}
-                onMouseLeave={() => setShowVolumeControl(false)}
-             >
-                 {/* Play/Pause & Volume Trigger */}
-                 <div className="absolute inset-0 z-20 flex items-center justify-center rounded-full bg-black/40 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                    <div className="flex items-center gap-3">
-                        <button onClick={onTogglePlay} className="text-white drop-shadow-md hover:scale-110 transition-transform">
-                             {isPlaying ? (
-                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                            ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                            )}
-                        </button>
-                        <div 
-                            className="relative flex items-center"
-                            onMouseEnter={() => setShowVolumeControl(true)}
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/80 hover:text-white cursor-pointer"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-                            {showVolumeControl && onVolumeChange && (
-                                <div className="absolute left-6 top-1/2 -translate-y-1/2 w-24 h-8 bg-[#111] rounded-full flex items-center px-3 border border-white/20 shadow-xl ml-2 animate-in fade-in slide-in-from-left-2 duration-200">
-                                    <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => onVolumeChange(parseFloat(e.target.value))} className="w-full h-1 bg-white/30 rounded-lg appearance-none cursor-pointer accent-white"/>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                 </div>
-                 
-                 {!isPlaying && (
-                     <div className="absolute left-2 z-10 flex items-center justify-center group-hover:opacity-0 transition-opacity">
-                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className={isLightMode ? 'text-black/50' : 'text-white/50'}><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                     </div>
-                 )}
-
-                 <div className={`w-full overflow-hidden ${!isPlaying ? 'opacity-50' : 'opacity-100'} transition-opacity mask-image-linear-gradient`}>
-                    {audioTitle && (audioTitle.length > 20) ? (
-                        <div className="w-[180px] overflow-hidden">
-                            <div className="animate-marquee-loop">
-                                <span className="whitespace-nowrap px-4 text-[15px]" style={{ fontFamily: musicFont, fontWeight: musicBold ? 'bold' : 'normal', fontStyle: musicItalic ? 'italic' : 'normal' }}>{audioTitle}</span>
-                                <span className="whitespace-nowrap px-4 text-[15px]" style={{ fontFamily: musicFont, fontWeight: musicBold ? 'bold' : 'normal', fontStyle: musicItalic ? 'italic' : 'normal' }}>{audioTitle}</span>
-                            </div>
-                        </div>
-                    ) : (
-                        <span className="text-[15px] text-center block w-full whitespace-nowrap" style={{ fontFamily: musicFont, fontWeight: musicBold ? 'bold' : 'normal', fontStyle: musicItalic ? 'italic' : 'normal' }}>{audioTitle}</span>
+              <h4 className="text-[10px] font-mono uppercase text-gray-500 mb-2 tracking-widest text-center border-b border-white/10 pb-1">Resim Boyutu</h4>
+              <div className="flex flex-col gap-1 mb-2">
+                  <div className="flex gap-1">
+                    <button onClick={(e) => { onBgImageStyleChange && onBgImageStyleChange('cover'); openCropper(e); }} className={`flex-1 text-[10px] py-1 px-1 rounded border transition-colors ${bgImageStyle === 'cover' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>Doldur</button>
+                    {bgImageStyle === 'cover' && (
+                        <button onClick={(e) => openCropper(e)} className="w-6 flex items-center justify-center rounded border border-white/10 bg-white/5 hover:bg-white/20 text-white" title="Konumla"><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
                     )}
-                 </div>
-
-                 <button onClick={(e) => { e.stopPropagation(); setShowMusicSettings(!showMusicSettings); }} className={`absolute -right-3 -top-3 w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 shadow-md z-30 ${isLightMode ? 'bg-white text-black border border-black/10' : 'bg-black text-white border border-white/20'}`}><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
-
-                 {showMusicSettings && (
-                    <div className="absolute top-10 left-1/2 -translate-x-1/2 w-64 bg-[#111]/95 backdrop-blur-xl border border-white/20 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] animate-config-pop cursor-default z-40" onPointerDown={stopProp} onClick={(e) => e.stopPropagation()}>
-                        <h4 className="text-xs font-mono uppercase text-gray-500 mb-3 tracking-widest border-b border-white/10 pb-2 vfx-item delay-1 text-center">Müzik Ayarları</h4>
-                        <div className="mb-3 vfx-item delay-2">
-                            <label className="text-[10px] text-gray-400 block mb-1 font-medium">Yazı Tipi</label>
-                            <select value={musicFont} onChange={(e) => setMusicFont(e.target.value)} className="w-full bg-black/40 border border-white/20 rounded-lg text-xs text-white p-2 outline-none cursor-pointer">
-                                {FONTS.map(f => (<option key={f.name} value={f.value} className="bg-gray-900 text-white">{f.name}</option>))}
-                            </select>
-                        </div>
-                        <div className="flex gap-2 mb-3 vfx-item delay-3">
-                            <button onClick={() => setMusicBold(!musicBold)} className={`flex-1 py-1.5 rounded border text-xs font-bold transition-all ${musicBold ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>B</button>
-                            <button onClick={() => setMusicItalic(!musicItalic)} className={`flex-1 py-1.5 rounded border text-xs italic transition-all ${musicItalic ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>I</button>
-                        </div>
-                        <div className="flex items-center justify-between border-t border-white/10 pt-3 vfx-item delay-4">
-                            <span className="text-[10px] text-gray-400 font-medium">Temiz Modda Göster</span>
-                            <button onClick={() => setMusicShowInCleanMode(!musicShowInCleanMode)} className={`w-8 h-4 rounded-full relative transition-colors ${musicShowInCleanMode ? 'bg-blue-600' : 'bg-white/10'}`}>
-                                <div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${musicShowInCleanMode ? 'translate-x-4' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-                        {hasLyrics && (
-                            <div className="border-t border-white/10 pt-3 mt-1 vfx-item delay-5 flex flex-col gap-2">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-[10px] text-gray-400 font-medium">Partikül Sözler (Beta)</span>
-                                    <button onClick={onToggleLyricParticles} className={`w-8 h-4 rounded-full relative transition-colors ${useLyricParticles ? 'bg-purple-600' : 'bg-white/10'}`}>
-                                        <div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${useLyricParticles ? 'translate-x-4' : 'translate-x-0'}`} />
-                                    </button>
-                                </div>
-                                
-                                {useLyricParticles && (
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-[10px] text-gray-400 font-medium pl-2 border-l-2 border-purple-500/50">Eko (Ritim)</span>
-                                        <button onClick={onToggleLyricEcho} className={`w-8 h-4 rounded-full relative transition-colors ${useLyricEcho ? 'bg-orange-600' : 'bg-white/10'}`}>
-                                            <div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${useLyricEcho ? 'translate-x-4' : 'translate-x-0'}`} />
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                 )}
-             </div>
-          </div>
-      )}
-
-      {/* Image Preview Modal */}
-      {showImageModal && pendingImage && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm" onPointerDown={(e) => e.stopPropagation()}>
-          <div className="bg-[#111] border border-white/20 p-6 rounded-2xl max-w-sm w-full shadow-2xl animate-in zoom-in duration-300">
-            <h3 className="text-white font-mono text-lg mb-4 text-center">Resim Önizleme</h3>
-            <div className="w-full h-48 bg-black/50 rounded-lg mb-4 overflow-hidden flex items-center justify-center border border-white/10">
-              <img src={pendingImage} alt="Preview" className="max-w-full max-h-full object-contain" />
-            </div>
-            <div className="flex gap-2 mb-6">
-                <button onClick={() => setUseOriginalImageColors(true)} className={`flex-1 py-2 text-xs rounded border transition-all flex flex-col items-center justify-center gap-1 ${useOriginalImageColors ? 'bg-blue-600/30 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'}`}><span className="font-bold">ORİJİNAL RENKLER</span></button>
-                <button onClick={() => setUseOriginalImageColors(false)} className={`flex-1 py-2 text-xs rounded border transition-all flex flex-col items-center justify-center gap-1 ${!useOriginalImageColors ? 'bg-blue-600/30 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'}`}><span className="font-bold">TEMA RENGİ</span></button>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => { setShowImageModal(false); setPendingImage(null); onInteractionEnd(); }} className="flex-1 py-3 rounded-lg bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors font-medium">İptal</button>
-              <button onClick={confirmImageUpload} className="flex-1 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors font-bold shadow-lg shadow-blue-900/50">Oluştur</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* BACKGROUND DECK */}
-      {bgImages && bgImages.length > 0 && (
-          <div className={`absolute bottom-6 right-44 w-24 h-16 transition-all duration-500 ease-in-out ${deckClass} z-[55]`} onPointerDown={stopProp} onContextMenu={handleDeckContextMenu} onWheel={handleDeckScroll}>
-              <div className="relative w-full h-full perspective-[500px]">
-                  {Array.from({ length: Math.min(bgImages.length, EXPAND_COUNT) }).map((_, i) => {
-                      const imgIndex = (deckIndex + i) % bgImages.length;
-                      const img = bgImages[imgIndex];
-                      let collapsedBottom = 0; let collapsedScale = 1; let collapsedZ = 20 - i; let collapsedOpacity = 1; let collapsedTransform = `translateY(0) translateX(0) rotate(0) scale(1)`; let animClass = "";
-                      if (!isDeckExpanded) { if (i === 0) { collapsedZ = 20; collapsedOpacity = 1; if (animDirection === 'next') animClass = 'anim-throw-next'; if (animDirection === 'prev') { animClass = 'anim-extract-from-back'; collapsedZ = 60; } } else if (i === 1) { collapsedZ = 15; collapsedScale = 0.95; collapsedBottom = 4; collapsedTransform = `translateY(-4px) translateX(2px) rotate(2deg) scale(0.95)`; collapsedOpacity = 0.9; if (animDirection === 'prev') { collapsedTransform = `translateY(0) translateX(0) rotate(0) scale(1)`; collapsedBottom = 0; collapsedOpacity = 1; collapsedZ = 19; } } else { collapsedOpacity = 0; } if (i === 2) { collapsedZ = 10; collapsedScale = 0.9; collapsedBottom = -2; collapsedTransform = `translateY(2px) translateX(4px) rotate(4deg) scale(0.9)`; collapsedOpacity = 0.7; } }
-                      const expandedBottom = (CARD_HEIGHT + GAP) * i; const expandedScale = 1; const expandedOpacity = 1; const expandedZ = 50 - i; const expandedTransform = `translateY(0) scale(1)`;
-                      const finalBottom = isDeckExpanded ? expandedBottom : collapsedBottom; const finalTransform = isDeckExpanded ? expandedTransform : collapsedTransform; const finalOpacity = isDeckExpanded ? expandedOpacity : collapsedOpacity; const finalZ = isDeckExpanded ? expandedZ : collapsedZ;
-                      return (
-                          <div key={imgIndex} className={`deck-card cursor-pointer group hover:border-blue-400 ${!isDeckExpanded ? animClass : ''}`} style={{ backgroundImage: `url(${img})`, bottom: `${finalBottom}px`, transform: finalTransform, opacity: finalOpacity, zIndex: finalZ, transitionDelay: isDeckExpanded ? `${i * 0.05}s` : '0s' }} onClick={(e) => handleCardClick(e, img)} onMouseEnter={() => { if (isDeckExpanded && onBgImageSelect) onBgImageSelect(img); }}>
-                             {i === 0 && !isDeckExpanded && (<button onClick={(e) => { e.stopPropagation(); setDeckShowSettings(!deckShowSettings); setShowResetMenu(false); }} className="absolute top-1 right-1 w-4 h-4 bg-black/60 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-all duration-200 backdrop-blur-sm"><svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>)}
-                             {i === 0 && !isDeckExpanded && (<button onClick={openResetMenu} className="absolute top-1 left-1 w-4 h-4 bg-red-600/80 rounded-full flex items-center justify-center text-white hover:bg-red-500 opacity-0 group-hover:opacity-100 transition-all duration-200 backdrop-blur-sm"><svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>)}
-                             {isDeckExpanded && (<button onClick={(e) => { e.stopPropagation(); if(onRemoveBgImage) onRemoveBgImage(img); }} className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full flex items-center justify-center text-white shadow-md hover:bg-red-500 transition-colors z-50"><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>)}
-                          </div>
-                      );
-                  })}
+                  </div>
+                  <button onClick={() => onBgImageStyleChange && onBgImageStyleChange('contain')} className={`text-[10px] py-1 px-2 rounded border transition-colors ${bgImageStyle === 'contain' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>Ortala</button>
+                  <button onClick={() => onBgImageStyleChange && onBgImageStyleChange('fill')} className={`text-[10px] py-1 px-2 rounded border transition-colors ${bgImageStyle === 'fill' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>Uzat</button>
+                  <button onClick={() => { toggleSlideshow(); setShowSlideshowPanel(!showSlideshowPanel); }} className={`text-[10px] py-1 px-2 rounded border transition-colors flex items-center justify-center gap-1 ${slideshowSettings?.active ? 'bg-green-600 border-green-500 text-white shadow-[0_0_10px_rgba(0,255,0,0.3)] animate-pulse' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>{slideshowSettings?.active ? 'SLAYT AÇIK' : 'SLAYT'}</span></button>
               </div>
-              
-              {/* Deck Settings */}
-              {deckShowSettings && !isDeckExpanded && (
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-32 bg-[#111]/95 backdrop-blur-xl border border-white/20 rounded-xl p-2 shadow-[0_10px_30px_rgba(0,0,0,0.5)] animate-config-pop origin-bottom z-[60]" onClick={stopProp}>
-                      {showSlideshowPanel && slideshowSettings && (
-                          <div className="absolute bottom-full left-0 w-full mb-2 bg-[#111]/95 backdrop-blur-xl border border-white/20 rounded-xl p-2 shadow-xl animate-in slide-in-from-bottom-2 fade-in duration-200 z-[70] origin-bottom">
-                              <h5 className="text-[9px] font-mono text-gray-400 text-center uppercase tracking-widest mb-2 border-b border-white/10 pb-1">Slayt Ayarları</h5>
-                              <div className="flex items-center gap-1 mb-2 bg-white/5 rounded p-1 border border-white/10">
-                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                  <input type="number" min="3" max="300" value={slideshowSettings.duration} onChange={(e) => updateSlideshow({ duration: Math.max(3, Math.min(300, parseInt(e.target.value) || 3)) })} className="w-full bg-transparent text-[10px] text-white text-center outline-none" />
-                                  <span className="text-[9px] text-gray-500">sn</span>
-                              </div>
-                              <div className="flex gap-1 mb-2">
-                                  <button onClick={() => updateSlideshow({ order: 'random' })} className={`flex-1 py-1 rounded flex justify-center items-center hover:scale-105 transition-all ${slideshowSettings.order === 'random' ? 'bg-blue-600 text-white' : 'bg-white/5 text-gray-400'}`} title="Rastgele"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={slideshowSettings.order === 'random' ? 'animate-spin-slow' : ''}><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l5 5M4 4l5 5"/></svg></button>
-                                  <button onClick={() => updateSlideshow({ order: 'sequential' })} className={`flex-1 py-1 rounded flex justify-center items-center hover:scale-105 transition-all ${slideshowSettings.order === 'sequential' ? 'bg-blue-600 text-white' : 'bg-white/5 text-gray-400'}`} title="Sırayla"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
-                              </div>
-                              <div className="relative">
-                                  <button onClick={() => setShowTransitionGrid(!showTransitionGrid)} className="w-full py-1.5 rounded bg-white/5 border border-white/10 text-[9px] text-gray-300 hover:bg-white/10 flex items-center justify-between px-2">
-                                      <div className="flex items-center gap-1">{TRANSITION_ICONS[slideshowSettings.transition]}<span className="truncate max-w-[60px]">{TRANSITION_NAMES[slideshowSettings.transition]}</span></div>
-                                      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${showTransitionGrid ? 'rotate-180' : ''}`}><polyline points="6 9 12 15 18 9"/></svg>
-                                  </button>
-                                  {showTransitionGrid && (
-                                      <div className="absolute bottom-full left-0 w-full mb-1 bg-[#111] border border-white/20 rounded-lg p-1 grid grid-cols-3 gap-1 shadow-2xl z-[80]">
-                                          {(Object.keys(TRANSITION_ICONS) as SlideshowTransition[]).map((t) => (
-                                              <button key={t} onClick={() => { updateSlideshow({ transition: t }); setShowTransitionGrid(false); }} className={`w-full aspect-square flex items-center justify-center rounded hover:scale-110 transition-all ${slideshowSettings.transition === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}`} title={TRANSITION_NAMES[t]}><div className="hover:animate-pulse">{TRANSITION_ICONS[t]}</div></button>
-                                          ))}
-                                      </div>
-                                  )}
-                              </div>
-                          </div>
-                      )}
-                      <h4 className="text-[10px] font-mono uppercase text-gray-500 mb-2 tracking-widest text-center border-b border-white/10 pb-1">Resim Boyutu</h4>
-                      <div className="flex flex-col gap-1 mb-2">
-                          <div className="flex gap-1">
-                            <button onClick={(e) => { onBgImageStyleChange && onBgImageStyleChange('cover'); openCropper(e); }} className={`flex-1 text-[10px] py-1 px-1 rounded border transition-colors ${bgImageStyle === 'cover' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>Doldur</button>
-                            {bgImageStyle === 'cover' && (
-                                <button onClick={(e) => openCropper(e)} className="w-6 flex items-center justify-center rounded border border-white/10 bg-white/5 hover:bg-white/20 text-white" title="Konumla"><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
-                            )}
-                          </div>
-                          <button onClick={() => onBgImageStyleChange && onBgImageStyleChange('contain')} className={`text-[10px] py-1 px-2 rounded border transition-colors ${bgImageStyle === 'contain' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>Ortala</button>
-                          <button onClick={() => onBgImageStyleChange && onBgImageStyleChange('fill')} className={`text-[10px] py-1 px-2 rounded border transition-colors ${bgImageStyle === 'fill' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}>Uzat</button>
-                          <button onClick={() => { toggleSlideshow(); setShowSlideshowPanel(!showSlideshowPanel); }} className={`text-[10px] py-1 px-2 rounded border transition-colors flex items-center justify-center gap-1 ${slideshowSettings?.active ? 'bg-green-600 border-green-500 text-white shadow-[0_0_10px_rgba(0,255,0,0.3)] animate-pulse' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>{slideshowSettings?.active ? 'SLAYT AÇIK' : 'SLAYT'}</span></button>
-                      </div>
-                      <div className="border-t border-white/10 pt-2 flex items-center justify-between">
-                          <span className="text-[9px] text-gray-400">Temiz Modda Gizle</span>
-                          <button onClick={() => setDeckHideInCleanMode(!deckHideInCleanMode)} className={`w-6 h-3 rounded-full relative transition-colors ${deckHideInCleanMode ? 'bg-blue-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-2 h-2 rounded-full bg-white transition-transform ${deckHideInCleanMode ? 'translate-x-3' : 'translate-x-0'}`} /></button>
-                      </div>
-                  </div>
-              )}
-              {showResetMenu && !isDeckExpanded && (
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-40 bg-[#111]/95 backdrop-blur-xl border border-white/20 rounded-xl p-3 shadow-[0_10px_30px_rgba(0,0,0,0.5)] animate-config-pop origin-bottom z-[60]" onClick={stopProp}>
-                      <h4 className="text-[10px] font-mono uppercase text-red-400 mb-2 tracking-widest text-center border-b border-white/10 pb-1">Sıfırlama</h4>
-                      <div className="flex flex-col gap-2 mb-3">
-                          <label className="flex items-center gap-2 cursor-pointer group"><div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${resetDeleteAll ? 'bg-red-600 border-red-500' : 'border-white/30 group-hover:border-white/50'}`}>{resetDeleteAll && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><polyline points="20 6 9 17 4 12"></polyline></svg>}</div><input type="checkbox" className="hidden" checked={resetDeleteAll} onChange={() => setResetDeleteAll(!resetDeleteAll)} /><span className="text-[10px] text-gray-300">Tümünü Sil</span></label>
-                          <label className="flex items-center gap-2 cursor-pointer group"><div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${resetResetSize ? 'bg-blue-600 border-blue-500' : 'border-white/30 group-hover:border-white/50'}`}>{resetResetSize && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><polyline points="20 6 9 17 4 12"></polyline></svg>}</div><input type="checkbox" className="hidden" checked={resetResetSize} onChange={() => setResetResetSize(!resetResetSize)} /><span className="text-[10px] text-gray-300">Boyutu Sıfırla</span></label>
-                      </div>
-                      <div className="flex gap-2"><button onClick={() => setShowResetMenu(false)} className="flex-1 py-1 rounded bg-white/10 text-[10px] text-gray-300 hover:bg-white/20">İptal</button><button onClick={handleResetConfirm} className="flex-1 py-1 rounded bg-red-600 text-[10px] text-white hover:bg-red-500 font-bold">Onayla</button></div>
-                  </div>
-              )}
+              <div className="border-t border-white/10 pt-2 flex items-center justify-between">
+                  <span className="text-[9px] text-gray-400">Temiz Modda Gizle</span>
+                  <button onClick={() => setDeckHideInCleanMode(!deckHideInCleanMode)} className={`w-6 h-3 rounded-full relative transition-colors ${deckHideInCleanMode ? 'bg-blue-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-2 h-2 rounded-full bg-white transition-transform ${deckHideInCleanMode ? 'translate-x-3' : 'translate-x-0'}`} /></button>
+              </div>
+          </div>
+      )}
+      {showResetMenu && (
+          <div className="absolute bottom-40 right-64 mb-4 w-40 bg-[#111]/95 backdrop-blur-xl border border-white/20 rounded-xl p-3 shadow-[0_10px_30px_rgba(0,0,0,0.5)] animate-config-pop origin-bottom z-[60]" onClick={stopProp}>
+              <h4 className="text-[10px] font-mono uppercase text-red-400 mb-2 tracking-widest text-center border-b border-white/10 pb-1">Sıfırlama</h4>
+              <div className="flex flex-col gap-2 mb-3">
+                  <label className="flex items-center gap-2 cursor-pointer group"><div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${resetDeleteAll ? 'bg-red-600 border-red-500' : 'border-white/30 group-hover:border-white/50'}`}>{resetDeleteAll && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><polyline points="20 6 9 17 4 12"></polyline></svg>}</div><input type="checkbox" className="hidden" checked={resetDeleteAll} onChange={() => setResetDeleteAll(!resetDeleteAll)} /><span className="text-[10px] text-gray-300">Tümünü Sil</span></label>
+                  <label className="flex items-center gap-2 cursor-pointer group"><div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${resetResetSize ? 'bg-blue-600 border-blue-500' : 'border-white/30 group-hover:border-white/50'}`}>{resetResetSize && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><polyline points="20 6 9 17 4 12"></polyline></svg>}</div><input type="checkbox" className="hidden" checked={resetResetSize} onChange={() => setResetResetSize(!resetResetSize)} /><span className="text-[10px] text-gray-300">Boyutu Sıfırla</span></label>
+              </div>
+              <div className="flex gap-2"><button onClick={() => setShowResetMenu(false)} className="flex-1 py-1 rounded bg-white/10 text-[10px] text-gray-300 hover:bg-white/20">İptal</button><button onClick={handleResetConfirm} className="flex-1 py-1 rounded bg-red-600 text-[10px] text-white hover:bg-red-500 font-bold">Onayla</button></div>
           </div>
       )}
 
-      {/* CROPPER MODAL, AUDIO MODAL, LEFT MENU, ETC. (UNCHANGED) */}
+      {/* CROPPER MODAL */}
       {showCropper && cropImage && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black" onPointerDown={(e) => e.stopPropagation()}>
               <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-lg z-20 font-mono tracking-wider">KONUMLANDIRMA MODU</div>
@@ -957,6 +1090,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
           </div>
       )}
 
+      {/* AUDIO SOURCE SELECT MODAL */}
       {showAudioModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm" onPointerDown={(e) => e.stopPropagation()}>
            <div className="bg-[#111] border border-white/20 p-6 rounded-2xl max-w-sm w-full shadow-2xl animate-in zoom-in duration-300">
@@ -972,6 +1106,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
         </div>
       )}
 
+      {/* --- SOL TARAFTAKİ EFEKT BUTONLARI (Vertical Sidebar) --- */}
       <div className={`absolute left-6 z-50 flex flex-col gap-4 transition-all duration-500 ease-in-out ${isWidgetMinimized ? 'top-32' : 'top-[230px]'} ${hideLeftClass}`} onMouseEnter={onInteractionStart} onMouseLeave={onInteractionEnd} onPointerDown={stopProp}>
           <button onClick={() => onPresetChange(activePreset === 'electric' ? 'none' : 'electric')} className={`preset-btn preset-electric w-10 h-10 rounded-full border backdrop-blur-md flex items-center justify-center relative ${activePreset === 'electric' ? 'active' : ''} ${isLightMode ? 'border-black/20 bg-black/5 hover:bg-black/10' : 'border-white/20 bg-black/50 hover:bg-white/10'}`} title="Elektrik Efekti"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-cyan-400 icon-animate-wiggle"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></button>
           <button onClick={() => onPresetChange(activePreset === 'fire' ? 'none' : 'fire')} className={`preset-btn preset-fire w-10 h-10 rounded-full border backdrop-blur-md flex items-center justify-center relative ${activePreset === 'fire' ? 'active' : ''} ${isLightMode ? 'border-black/20 bg-black/5 hover:bg-black/10' : 'border-white/20 bg-black/50 hover:bg-white/10'}`} title="Ateş Efekti"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500 icon-animate-bounce"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.1.2-2.2.5-3 .5.7 1 1.3 2 1.5z"></path></svg></button>
@@ -1171,7 +1306,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
         </div>
       )}
 
-      {/* --- ALT MENÜ (TAMAMLANDI) --- */}
+      {/* --- ALT MENÜ (MAIN CONTROLS) --- */}
       <div className="absolute bottom-10 left-0 w-full flex justify-center items-center pointer-events-none z-[100] px-4">
         <div className={`pointer-events-auto w-full max-w-lg relative flex gap-2 items-center transition-transform duration-500 ${hideBottomClass}`} onPointerDown={stopProp}>
           {isPaletteOpen && (

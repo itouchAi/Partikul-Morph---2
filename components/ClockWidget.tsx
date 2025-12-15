@@ -80,61 +80,59 @@ export const ClockWidget: React.FC<ClockWidgetProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Weather Fetching Logic
-  useEffect(() => {
-      if (useLocation) {
+  const fetchWeather = () => {
+      if (useLocation && navigator.geolocation) {
           setWeatherLoading(true);
-          if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition(
-                  async (position) => {
-                      try {
-                          const { latitude, longitude } = position.coords;
-                          
-                          // 1. Fetch Weather Data (Open-Meteo - Free, No Key)
-                          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
-                          const weatherJson = await weatherRes.json();
-                          
-                          // 2. Fetch City Name (BigDataCloud - Free Reverse Geocoding)
-                          const cityRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
-                          const cityJson = await cityRes.json();
+          navigator.geolocation.getCurrentPosition(
+              async (position) => {
+                  try {
+                      const { latitude, longitude } = position.coords;
+                      
+                      // 1. Fetch Weather Data
+                      const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
+                      const weatherJson = await weatherRes.json();
+                      
+                      // 2. Fetch City Name
+                      const cityRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
+                      const cityJson = await cityRes.json();
 
-                          // Parse Condition (WMO Weather interpretation codes)
-                          const code = weatherJson.current_weather.weathercode;
-                          let condition: WeatherCondition = 'clear';
-                          if (code >= 1 && code <= 3) condition = 'cloudy';
-                          else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) condition = 'rain';
-                          else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) condition = 'snow';
-                          else if (code > 3) condition = 'cloudy'; // Fog etc.
+                      const code = weatherJson.current_weather.weathercode;
+                      let condition: WeatherCondition = 'clear';
+                      if (code >= 1 && code <= 3) condition = 'cloudy';
+                      else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) condition = 'rain';
+                      else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) condition = 'snow';
+                      else if (code > 3) condition = 'cloudy';
 
-                          // Parse City (Abbreviation)
-                          let cityName = cityJson.city || cityJson.locality || "LOC";
-                          cityName = cityName.substring(0, 3).toUpperCase();
+                      let cityName = cityJson.city || cityJson.locality || "LOC";
+                      cityName = cityName.substring(0, 3).toUpperCase();
 
-                          setWeatherData({
-                              temp: weatherJson.current_weather.temperature,
-                              condition: condition,
-                              city: cityName
-                          });
-                      } catch (error) {
-                          console.error("Weather fetch failed", error);
-                          setWeatherData(null);
-                      } finally {
-                          setWeatherLoading(false);
-                      }
-                  },
-                  (error) => {
-                      console.warn("Location permission denied", error);
-                      setUseLocation(false);
+                      setWeatherData({
+                          temp: weatherJson.current_weather.temperature,
+                          condition: condition,
+                          city: cityName
+                      });
+                  } catch (error) {
+                      console.error("Weather fetch failed", error);
+                      setWeatherData(null);
+                  } finally {
                       setWeatherLoading(false);
                   }
-              );
-          } else {
-              console.warn("Geolocation not supported");
-              setWeatherLoading(false);
-          }
-      } else {
-          setWeatherData(null);
+              },
+              (error) => {
+                  console.warn("Location permission denied", error);
+                  setUseLocation(false);
+                  setWeatherLoading(false);
+              }
+          );
       }
+  };
+
+  // Initial Fetch & Interval
+  useEffect(() => {
+      fetchWeather();
+      // Update weather every 15 minutes
+      const interval = setInterval(fetchWeather, 900000); 
+      return () => clearInterval(interval);
   }, [useLocation]);
 
   const formatTime = (date: Date) => date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });

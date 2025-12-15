@@ -252,47 +252,53 @@ export const Screensaver: React.FC<ScreensaverProps> = ({
     return () => clearInterval(timer);
   }, [active]);
 
+  const fetchWeather = () => {
+      // Konum varsa veriyi çek
+      if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+              async (position) => {
+                  try {
+                      const { latitude, longitude } = position.coords;
+                      
+                      // Weather Data
+                      const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
+                      const weatherJson = await weatherRes.json();
+                      
+                      // City Name
+                      const cityRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
+                      const cityJson = await cityRes.json();
+
+                      const code = weatherJson.current_weather.weathercode;
+                      let condition: WeatherCondition = 'clear';
+                      if (code >= 1 && code <= 3) condition = 'cloudy';
+                      else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) condition = 'rain';
+                      else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) condition = 'snow';
+                      else if (code > 3) condition = 'cloudy';
+
+                      let cityName = cityJson.city || cityJson.locality || "LOC";
+                      cityName = cityName.substring(0, 3).toUpperCase();
+
+                      setWeatherData({
+                          temp: weatherJson.current_weather.temperature,
+                          condition: condition,
+                          city: cityName
+                      });
+                  } catch (error) {
+                      console.error("Screensaver weather fetch error", error);
+                  }
+              },
+              () => console.warn("Location permission needed for screensaver weather")
+          );
+      }
+  };
+
   // Hava Durumu Fetch Logic
   useEffect(() => {
     if (!active) return;
     
-    // Konum varsa veriyi çek
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-            async (position) => {
-                try {
-                    const { latitude, longitude } = position.coords;
-                    
-                    // Weather Data
-                    const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
-                    const weatherJson = await weatherRes.json();
-                    
-                    // City Name
-                    const cityRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
-                    const cityJson = await cityRes.json();
-
-                    const code = weatherJson.current_weather.weathercode;
-                    let condition: WeatherCondition = 'clear';
-                    if (code >= 1 && code <= 3) condition = 'cloudy';
-                    else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) condition = 'rain';
-                    else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) condition = 'snow';
-                    else if (code > 3) condition = 'cloudy';
-
-                    let cityName = cityJson.city || cityJson.locality || "LOC";
-                    cityName = cityName.substring(0, 3).toUpperCase();
-
-                    setWeatherData({
-                        temp: weatherJson.current_weather.temperature,
-                        condition: condition,
-                        city: cityName
-                    });
-                } catch (error) {
-                    console.error("Screensaver weather fetch error", error);
-                }
-            },
-            () => console.warn("Location permission needed for screensaver weather")
-        );
-    }
+    fetchWeather();
+    const interval = setInterval(fetchWeather, 900000); // 15 mins
+    return () => clearInterval(interval);
   }, [active]);
 
   const hours = time.getHours();
