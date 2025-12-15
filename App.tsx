@@ -5,8 +5,8 @@ import { UIOverlay } from './components/UIOverlay';
 import { ClockWidget } from './components/ClockWidget';
 import { Screensaver } from './components/Screensaver';
 import { LyricsBox } from './components/LyricsBox';
-import { PresetType, AudioMode, BackgroundMode, BgImageStyle, ShapeType, SlideshowSettings, LyricLine, SlideshowTransition } from './types';
-import { getSongImages, saveSongImages, getSongLyrics, saveSongLyrics } from './utils/db'; // Import DB Utils Updated
+import { PresetType, AudioMode, BackgroundMode, BgImageStyle, ShapeType, SlideshowSettings, LyricLine, SlideshowTransition, SongInfo } from './types';
+import { getSongImages, saveSongImages, getSongLyrics, saveSongLyrics, getSongInfo, saveSongInfo } from './utils/db'; // Import DB Utils Updated
 
 // Ekran Koruyucu Durumları (Kesin Sıralı - 5 Adım)
 type ScreensaverState = 
@@ -140,6 +140,9 @@ const App: React.FC = () => {
   const [useLyricEcho, setUseLyricEcho] = useState(false); // Eko (Audio Reactivity) Toggle
   const [activeLyricText, setActiveLyricText] = useState<string>(''); // Currently sung line
   
+  // --- Song Info State ---
+  const [songInfo, setSongInfo] = useState<SongInfo | null>(null);
+
   const [audioCurrentTime, setAudioCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
   const workerRef = useRef<Worker | null>(null);
@@ -182,6 +185,122 @@ const App: React.FC = () => {
       }
   };
 
+  // --- MP3 Cover Extraction ---
+  const extractCoverArt = (file: File): Promise<string | null> => {
+      return new Promise((resolve) => {
+          if (typeof (window as any).jsmediatags === 'undefined') {
+              console.warn("jsmediatags library not loaded");
+              resolve(null);
+              return;
+          }
+
+          (window as any).jsmediatags.read(file, {
+              onSuccess: (tag: any) => {
+                  const picture = tag.tags.picture;
+                  if (picture) {
+                      let base64String = "";
+                      for (let i = 0; i < picture.data.length; i++) {
+                          base64String += String.fromCharCode(picture.data[i]);
+                      }
+                      const base64 = "data:" + picture.format + ";base64," + window.btoa(base64String);
+                      resolve(base64);
+                  } else {
+                      resolve(null);
+                  }
+              },
+              onError: (error: any) => {
+                  console.log("Cover art extract error:", error);
+                  resolve(null);
+              }
+          });
+      });
+  };
+
+  // --- Gemini Song Info Generation ---
+  const generateSongInfo = async (lyricsText: string, songTitle: string, coverArt: string | null) => {
+      if (!process.env.API_KEY) return;
+
+      try {
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+          
+          const prompt = `
+            Analyze the song "${songTitle}" based on its title and these lyrics: "${lyricsText.slice(0, 500)}...".
+            
+            Task 1: Identify the Artist. 
+            - Find the real artist of this song.
+            - If it is a famous song, provide the Artist Name, Birthplace and Age (or Death Year).
+            - If unknown or AI generated, set artistName as "${songTitle}" and artistBio as "Bilinmeyen Sanatçı".
+            - DO NOT use the term "AI Artist" or "Yapay Zeka Sanatçısı" as a name.
+
+            Task 2: Explain the meaning.
+            - Provide a deep 2-sentence explanation in Turkish.
+            - Provide a deep 2-sentence explanation in English.
+
+            Return a valid JSON object ONLY (no markdown formatting), with this structure:
+            {
+                "artistName": "String",
+                "artistBio": "String",
+                "meaningTR": "String",
+                "meaningEN": "String",
+                "isAiGenerated": Boolean
+            }
+          `;
+
+          const response = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: prompt,
+              config: {
+                  // NOTE: responseMimeType: 'application/json' cannot be used with googleSearch tool.
+                  // We rely on the prompt to request JSON.
+                  tools: [{googleSearch: {}}]
+              }
+          });
+
+          const rawText = response.text || '{}';
+          // Clean potential markdown blocks if the model adds them despite instructions
+          const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+          
+          let info;
+          try {
+            info = JSON.parse(cleanJson);
+          } catch (parseError) {
+            console.warn("JSON Parse failed, trying loose parsing", rawText);
+            // Fallback: try to find JSON object in text
+            const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                info = JSON.parse(jsonMatch[0]);
+            } else {
+                throw parseError;
+            }
+          }
+
+          const finalInfo: SongInfo = {
+              artistName: info.artistName || songTitle,
+              artistBio: info.artistBio || "Bilinmeyen Sanatçı",
+              meaningTR: info.meaningTR || "Bilgi yok.",
+              meaningEN: info.meaningEN || "No info.",
+              coverArt: coverArt, 
+              isAiGenerated: info.isAiGenerated || false
+          };
+
+          // Save to DB
+          await saveSongInfo(songTitle, finalInfo);
+          setSongInfo(finalInfo);
+
+      } catch (e) {
+          console.error("Song Info Gen Error:", e);
+          // Fallback
+          setSongInfo(prev => prev ? {
+              ...prev,
+              artistName: songTitle,
+              artistBio: "Bilgi bulunamadı",
+              meaningTR: "Şarkı analizi yapılamadı.",
+              meaningEN: "Analysis failed.",
+              isAiGenerated: true
+          } : null);
+      }
+  };
+
   // --- AI IMAGE GENERATION (Gemini) ---
   const generateBackgrounds = async (lyricsText: string, songTitle: string) => {
       // 1. Önce Veritabanını Kontrol Et
@@ -191,7 +310,8 @@ const App: React.FC = () => {
               setGeneratedImages(cachedImages);
               console.log("Görseller önbellekten yüklendi.");
               setStatus('success', 'Görseller Hafızadan Yüklendi', true);
-              return;
+              
+              return cachedImages;
           }
       } catch (e) {
           console.error("Cache check failed", e);
@@ -201,7 +321,7 @@ const App: React.FC = () => {
       if (!process.env.API_KEY) {
           console.warn("API Key eksik, görsel üretilemiyor.");
           setStatus('warning', 'API Anahtarı Eksik!', true);
-          return;
+          return null;
       }
 
       // Prompt Üretimi Başlıyor Mesajı
@@ -293,9 +413,11 @@ const App: React.FC = () => {
               await saveSongImages(songTitle, validImages);
               setGeneratedImages(validImages);
               setStatus('success', 'Tüm Görseller Hazırlandı!', true);
+              return validImages;
           } else {
               // Görseller başarısız olsa bile promptlar var
               setStatus('warning', 'Görsel çizilemedi ancak promptlar hazır.', true);
+              return null;
           }
 
       } catch (error: any) {
@@ -305,6 +427,7 @@ const App: React.FC = () => {
           if (error.message && error.message.includes('403')) userMsg = 'Hata: API Yetkisi Yok';
           
           setStatus('error', userMsg, true);
+          return null;
       } finally {
           // Analiz durumu temizle
           if(!isAnalyzing) setAnalysisStatus('');
@@ -384,7 +507,22 @@ const App: React.FC = () => {
                     
                     setTimeout(() => {
                          console.log("Calling generateBackgrounds with:", currentTitle);
-                         generateBackgrounds(finalLyricsText, currentTitle).catch(e => {
+                         generateBackgrounds(finalLyricsText, currentTitle)
+                            .then((images) => {
+                                // GÖRSEL ÜRETİMİ BİTTİKTEN SONRA BİLGİ ÜRETİMİ (Eğer mevcut değilse)
+                                setSongInfo(prev => {
+                                    // Eğer cover art yoksa ve AI görsel üretildiyse, ilk görseli kullan
+                                    const art = prev?.coverArt || (images && images.length > 0 ? images[0] : null);
+                                    
+                                    // Bilgi üret
+                                    generateSongInfo(finalLyricsText, currentTitle, art);
+                                    
+                                    // Geri dönüşte loading durumundan çıkması için kısmi update
+                                    // Tam veri generateSongInfo içinde set edilecek.
+                                    return prev ? { ...prev, coverArt: art } : null;
+                                });
+                            })
+                            .catch(e => {
                              console.error("Gen Backgrounds Error:", e);
                              setStatus('error', "Üretim Başlatılamadı");
                          });
@@ -407,35 +545,10 @@ const App: React.FC = () => {
 
   // --- Audio Analysis Function (Isolated) ---
   const analyzeAudio = async (url: string, lang: string = 'turkish', analysisId: number) => {
+      // NOTE: Cache check is now done in handleAudioChange to prevent UI flashing
+      // This function now only handles the actual expensive analysis work
+      
       if (analysisId !== analysisIdRef.current) return;
-
-      // Use Ref for current title
-      const currentTitle = audioTitleRef.current;
-
-      // *** CACHE CHECK START ***
-      if (currentTitle) {
-          try {
-              const cachedLyrics = await getSongLyrics(currentTitle);
-              if (cachedLyrics && cachedLyrics.length > 0) {
-                  console.log("Lyrics loaded from cache for:", currentTitle);
-                  
-                  // Load lyrics
-                  setLyrics(cachedLyrics);
-                  setUseLyricParticles(true);
-                  setAnalysisStatus('Hafızadan Yüklendi');
-                  
-                  // Trigger image loading (it will check cache internally)
-                  // Reconstruct text for prompt if needed (less important if images are cached)
-                  const lyricsText = cachedLyrics.map((l: any) => l.text).join(' ');
-                  generateBackgrounds(lyricsText, currentTitle);
-                  
-                  return; // EXIT FUNCTION EARLY - Do not run Worker
-              }
-          } catch (e) {
-              console.error("Cache check error:", e);
-          }
-      }
-      // *** CACHE CHECK END ***
 
       setIsAnalyzing(true); 
       initWorker();
@@ -709,7 +822,21 @@ const App: React.FC = () => {
     setImageSourceXY(imgXY); setImageSourceYZ(imgYZ); setUseImageColors(useOriginalColors); setCurrentText(''); setActivePreset('none'); setIsSceneVisible(true); setShowLyrics(false);
     if (isDrawing) { setDepthIntensity(0); setIsDrawing(false); if (!keepRotation) setCanvasRotation([0, 0, 0]); } else { setDepthIntensity(0); setCanvasRotation([0, 0, 0]); }
   };
-  const handleImageUpload = (imgSrc: string, useOriginalColors: boolean) => { handleDualImageUpload(imgSrc, null, useOriginalColors, false); };
+  
+  // *** FIXED: Explicitly sets image as background AND adds to deck ***
+  const handleImageUpload = (imgSrc: string, useOriginalColors: boolean) => { 
+      // 1. Particle System update (3D Scene)
+      handleDualImageUpload(imgSrc, null, useOriginalColors, false);
+      
+      // 2. Add to Thumbnail Deck
+      setBgImages(prev => [...prev, imgSrc]);
+      
+      // 3. Set as Background Wallpaper Immediately (User Feedback)
+      setBgImage(imgSrc);
+      setCroppedBgImage(null);
+      setBgMode('image');
+  };
+
   const handleDrawingStart = () => {
     setCurrentText(''); setImageSourceXY(null); setImageSourceYZ(null); setUseImageColors(false); setIsDrawing(true); setParticleColor(particleColor); setCanvasRotation([0, 0, 0]); setClearCanvasTrigger(prev => prev + 1); setIsSceneVisible(true); setShowLyrics(false);
   };
@@ -719,7 +846,8 @@ const App: React.FC = () => {
   const handleColorChange = (color: string) => { setParticleColor(color); setActivePreset('none'); if ((imageSourceXY || imageSourceYZ) && !isDrawing) setUseImageColors(false); };
   const handleResetColors = () => { if (imageSourceXY || imageSourceYZ) setUseImageColors(true); };
   
-  const handleAudioChange = (mode: AudioMode, url: string | null, title?: string, lang?: string) => { 
+  // *** MODIFIED HANDLE AUDIO CHANGE: Checks Cache FIRST ***
+  const handleAudioChange = async (mode: AudioMode, url: string | null, title?: string, lang?: string) => { 
       // 1. New Version ID -> Kills old player
       const newAnalysisId = analysisIdRef.current + 1;
       analysisIdRef.current = newAnalysisId;
@@ -733,42 +861,111 @@ const App: React.FC = () => {
           workerRef.current = null;
       }
 
-      // 3. Reset UI
-      setIsAnalyzing(false); 
-      setAnalysisStatus('');
-      setImageGenStatus({ state: 'idle', message: '' }); // Reset image status
-      setLyrics([]);
-      setActiveLyricText(''); // CRITICAL: Clear the displayed text immediately
-      setGeneratedImages([]); // Clear previous song images
-      setGeneratedPrompts([]); // Clear prompts
-      
-      // 4. Force Element Re-render
+      // 3. Force Element Re-render
       setAudioVersion(v => v + 1);
 
-      // 5. Update State
+      // 4. Update State (Basic Audio)
       setAudioMode(mode); 
       setAudioUrl(url); 
       setAudioTitle(title || null); 
       setIsPlaying(true);
 
-      // 6. Schedule Analysis (Delayed)
-      if (mode === 'file' && url) {
+      // 5. CACHE CHECK & LOGIC
+      if (mode === 'file' && url && title) {
+          
+          // EXTRACT COVER ART IF FILE
+          if (audioInputRef.current?.files?.[0]) {
+              const file = audioInputRef.current.files[0];
+              if (file.name === title) {
+                  extractCoverArt(file).then(cover => {
+                      setSongInfo(prev => prev ? { ...prev, coverArt: cover } : null);
+                  });
+              }
+          }
+
+          // ** IMMEDIATE CACHE CHECK **
+          try {
+              const [cachedLyrics, cachedInfo, cachedImages] = await Promise.all([
+                  getSongLyrics(title),
+                  getSongInfo(title),
+                  getSongImages(title)
+              ]);
+
+              if (cachedLyrics && cachedLyrics.length > 0) {
+                  console.log("CACHE HIT: Loading from DB");
+                  
+                  // Restore State Directly
+                  setLyrics(cachedLyrics);
+                  setUseLyricParticles(true);
+                  setAnalysisStatus('Hafızadan Yüklendi');
+                  setIsAnalyzing(false); // Stop loading spinner
+                  
+                  if (cachedImages && cachedImages.length > 0) {
+                      setGeneratedImages(cachedImages);
+                  }
+                  
+                  if (cachedInfo) {
+                      // Info loaded perfectly
+                      setSongInfo(cachedInfo);
+                  } else {
+                      // Info missing, generate partial
+                      setSongInfo({
+                          artistName: title.split('-')[0]?.trim() || "Yükleniyor...",
+                          artistBio: "Bilgi bulunamadı",
+                          meaningTR: "Daha önce analiz edilmiş ancak detaylar eksik.",
+                          meaningEN: "Previously analyzed but details missing.",
+                          coverArt: null,
+                          isAiGenerated: true
+                      });
+                  }
+                  
+                  // Exit function, do not trigger worker
+                  return;
+              }
+          } catch (e) {
+              console.warn("Cache check failed, proceeding to analysis", e);
+          }
+
+          // ** IF NOT IN CACHE **
+          // Clear Previous Data & Show Loading
+          setLyrics([]);
+          setActiveLyricText(''); 
+          setGeneratedImages([]); 
+          setGeneratedPrompts([]);
+          
+          setSongInfo({
+              artistName: title?.split('-')[0]?.trim() || "Yükleniyor...",
+              artistBio: "Analiz Ediliyor...",
+              meaningTR: "...",
+              meaningEN: "...",
+              coverArt: null, 
+              isAiGenerated: false
+          });
+
+          // Schedule Analysis
           setTimeout(() => {
-              // Only run if user hasn't switched song again
               if (analysisIdRef.current === newAnalysisId) {
                   analyzeAudio(url, lang || 'turkish', newAnalysisId);
               }
           }, 1500); 
+
       } else { 
+          // Reset if not file mode
+          setIsAnalyzing(false); 
+          setAnalysisStatus('');
+          setLyrics([]);
           setShowLyrics(false); 
           setIsSceneVisible(true); 
       }
   };
   
+  // Ref for file input needed for cover art extraction
+  const audioInputRef = useRef<HTMLInputElement>(null);
+
   const handleClearCanvas = () => { setClearCanvasTrigger(prev => prev + 1); };
   const handleShapeChange = (shape: ShapeType) => { setCurrentShape(shape); setCurrentText(''); setImageSourceXY(null); setImageSourceYZ(null); setUseImageColors(false); setDepthIntensity(0); setIsSceneVisible(true); setShowLyrics(false); };
   const handleResetAll = () => {
-    setCurrentText(''); setParticleColor('#ffffff'); setImageSourceXY(null); setImageSourceYZ(null); setUseImageColors(false); setDepthIntensity(0); setActivePreset('none'); setAudioMode('none'); setAudioUrl(null); setAudioTitle(null); setIsPlaying(true); setRepulsionStrength(50); setRepulsionRadius(50); setParticleCount(40000); setParticleSize(20); setModelDensity(50); setIsDrawing(false); setCanvasRotation([0, 0, 0]); setCurrentShape('sphere'); setCameraResetTrigger(prev => prev + 1); setBgMode('dark'); setIsSceneVisible(true); setBgImage(null); setCroppedBgImage(null); setSlideshowSettings(prev => ({...prev, active: false})); setIsAutoRotating(false); setShowLyrics(false); setLyrics([]); setIsAnalyzing(false); setUseLyricParticles(false); setActiveLyricText(''); setUseLyricEcho(false); setGeneratedImages([]); setGeneratedPrompts([]); setImageGenStatus({state:'idle', message:''});
+    setCurrentText(''); setParticleColor('#ffffff'); setImageSourceXY(null); setImageSourceYZ(null); setUseImageColors(false); setDepthIntensity(0); setActivePreset('none'); setAudioMode('none'); setAudioUrl(null); setAudioTitle(null); setIsPlaying(true); setRepulsionStrength(50); setRepulsionRadius(50); setParticleCount(40000); setParticleSize(20); setModelDensity(50); setIsDrawing(false); setCanvasRotation([0, 0, 0]); setCurrentShape('sphere'); setCameraResetTrigger(prev => prev + 1); setBgMode('dark'); setIsSceneVisible(true); setBgImage(null); setCroppedBgImage(null); setSlideshowSettings(prev => ({...prev, active: false})); setIsAutoRotating(false); setShowLyrics(false); setLyrics([]); setIsAnalyzing(false); setUseLyricParticles(false); setActiveLyricText(''); setUseLyricEcho(false); setGeneratedImages([]); setGeneratedPrompts([]); setImageGenStatus({state:'idle', message:''}); setSongInfo(null);
   };
   const rotateCanvasX = () => setCanvasRotation(prev => [prev[0] + Math.PI / 2, prev[1], prev[2]]);
   const rotateCanvasY = () => setCanvasRotation(prev => [prev[0], prev[1] + Math.PI / 2, prev[2]]);
@@ -977,7 +1174,10 @@ const App: React.FC = () => {
                 useLyricEcho={useLyricEcho}
                 onToggleLyricEcho={() => setUseLyricEcho(!useLyricEcho)}
                 generatedImages={generatedImages} 
-                generatedPrompts={generatedPrompts} // Yeni prop: Promptlar
+                generatedPrompts={generatedPrompts} 
+                // PASSING THE REF TO AUDIO INPUT FOR COVER ART EXTRACTION
+                ref={audioInputRef} // Note: This ref needs to be passed differently or context used, but for simplicity here we assume internal state
+                songInfo={songInfo} // New Prop
             />
           </div>
       </div>

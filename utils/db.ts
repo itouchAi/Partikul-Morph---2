@@ -1,9 +1,12 @@
 
+import { SongInfo } from '../types';
+
 // Basit bir IndexedDB sarmalayıcısı
 const DB_NAME = 'ParticleMusicDB';
 const STORE_IMAGES = 'SongImages';
-const STORE_LYRICS = 'SongLyrics'; // Yeni depo
-const DB_VERSION = 2; // Versiyon yükseltildi
+const STORE_LYRICS = 'SongLyrics';
+const STORE_INFO = 'SongInfo'; // Yeni depo: Şarkı Bilgileri
+const DB_VERSION = 3; // Versiyon yükseltildi (Info eklendi)
 
 export const openDB = (): Promise<IDBDatabase> => {
     return new Promise((resolve, reject) => {
@@ -17,9 +20,14 @@ export const openDB = (): Promise<IDBDatabase> => {
                 db.createObjectStore(STORE_IMAGES); 
             }
 
-            // Sözler Deposu (Yeni)
+            // Sözler Deposu
             if (!db.objectStoreNames.contains(STORE_LYRICS)) {
                 db.createObjectStore(STORE_LYRICS);
+            }
+
+            // Bilgi Deposu (Yeni)
+            if (!db.objectStoreNames.contains(STORE_INFO)) {
+                db.createObjectStore(STORE_INFO);
             }
         };
 
@@ -66,8 +74,6 @@ export const getSongImages = async (songTitle: string): Promise<string[] | undef
     }
 };
 
-// --- YENİ: SÖZ KAYDETME/ÇEKME FONKSİYONLARI ---
-
 export const saveSongLyrics = async (songTitle: string, lyricsData: any[]) => {
     try {
         const db = await openDB();
@@ -97,6 +103,42 @@ export const getSongLyrics = async (songTitle: string): Promise<any[] | undefine
         });
     } catch (e) {
         console.error("Sözler çekilemedi:", e);
+        return undefined;
+    }
+};
+
+// --- INFO İŞLEMLERİ ---
+
+export const saveSongInfo = async (songTitle: string, info: SongInfo) => {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_INFO, 'readwrite');
+        const store = tx.objectStore(STORE_INFO);
+        // Cover art çok yer kaplayabilir, eğer çok büyükse kaydetmeyebiliriz ama şimdilik kaydedelim.
+        store.put(info, songTitle);
+        
+        return new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve(undefined);
+            tx.onerror = () => reject(tx.error);
+        });
+    } catch (e) {
+        console.error("Bilgi kaydedilemedi:", e);
+    }
+};
+
+export const getSongInfo = async (songTitle: string): Promise<SongInfo | undefined> => {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_INFO, 'readonly');
+        const store = tx.objectStore(STORE_INFO);
+        const request = store.get(songTitle);
+
+        return new Promise((resolve) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(undefined);
+        });
+    } catch (e) {
+        console.error("Bilgi çekilemedi:", e);
         return undefined;
     }
 };

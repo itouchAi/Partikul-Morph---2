@@ -20,3 +20,12 @@ export interface LyricLine {
     start: number; // saniye cinsinden
     end: number;   // saniye cinsinden
 }
+
+export interface SongInfo {
+    artistName: string;
+    artistBio: string; // Yaş, doğum yeri vb.
+    meaningTR: string;
+    meaningEN: string;
+    coverArt: string | null; // Base64 image
+    isAiGenerated: boolean;
+}
