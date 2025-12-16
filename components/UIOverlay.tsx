@@ -253,8 +253,16 @@ const ImageDeck: React.FC<{
                             onClick={(e) => handleCardClick(e, img, realIdx)}
                             onMouseEnter={() => onHover && onHover(img)}
                         >
-                            <button onClick={(e) => { e.stopPropagation(); onRemove(img); }} className="absolute -top-2 -right-2 w-5 h-5 bg-red-600 rounded-full text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm z-10 hover:bg-red-500">-</button>
-                            {downloadable && ( <button onClick={(e) => downloadImage(e, img, realIdx)} className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="drop-shadow-md"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg></button> )}
+                            {/* Silme Butonu (Sağ Üst) */}
+                            <button onClick={(e) => { e.stopPropagation(); onRemove(img); }} className="absolute -top-2 -right-2 w-5 h-5 bg-red-600 rounded-full text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm z-10 hover:bg-red-500" title="Sil">-</button>
+                            
+                            {/* İndirme Butonu (Sol Üst - Küçültülmüş) */}
+                            {downloadable && ( 
+                                <button onClick={(e) => downloadImage(e, img, realIdx)} className="absolute -top-2 -left-2 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity shadow-sm z-10 hover:bg-blue-500" title="İndir">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                </button> 
+                            )}
+                            
                             {realIdx === activeIndex && <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none"></div>}
                         </div>
                     );
@@ -447,6 +455,20 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
         @keyframes marquee-loop { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
         .animate-marquee-loop { animation: marquee-loop 15s linear infinite; display: flex; width: max-content; }
         .mask-linear-fade { mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent); WebkitMaskImage: linear-gradient(to right, transparent, black 10%, black 90%, transparent); }
+        
+        /* Disk Entry Animation (Spin + Scale) */
+        @keyframes spin-enter { 
+            0% { transform: rotateY(0deg) scale(0.2); opacity: 0; } 
+            100% { transform: rotateY(360deg) scale(1); opacity: 1; } 
+        }
+        .animate-disk-enter { animation: spin-enter 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+        
+        /* Disk Exit Animation (Reverse Spin + Scale) */
+        @keyframes spin-exit {
+            0% { transform: rotateY(360deg) scale(1); opacity: 1; }
+            100% { transform: rotateY(0deg) scale(0.2); opacity: 0; }
+        }
+        .animate-disk-exit { animation: spin-exit 0.6s cubic-bezier(0.32, 0, 0.67, 0) forwards; }
       `}</style>
       
       {isAnyMenuOpen && ( <div className="fixed inset-0 z-40 bg-transparent" onPointerDown={closeAllMenus} /> )}
@@ -456,7 +478,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
       <input type="file" accept="audio/*" ref={actualAudioInputRef} onChange={handleAudioSelect} className="hidden" />
       <input type="file" accept="image/*" multiple ref={bgImageInputRef} onChange={handleBgImagesSelect} className="hidden" />
 
-      {/* --- MÜZİK ÇALAR WIDGET (TOP CENTER) - Full Features Restored --- */}
+      {/* --- MÜZİK ÇALAR WIDGET (TOP CENTER) - Fixed --- */}
       {(audioMode !== 'none' && !isUIHidden && !isDrawing) && (
           <div 
               className={`absolute top-6 left-1/2 -translate-x-1/2 z-[60] transition-all duration-500 ${isWidgetMinimized ? '-translate-y-[200%]' : (musicShowInCleanMode ? 'translate-y-0' : (isUIHidden ? '-translate-y-[200%]' : 'translate-y-0'))}`}
@@ -481,28 +503,33 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
 
                   {/* Song Title (Marquee) & Artist */}
                   <div className="flex flex-col w-40 overflow-hidden relative">
-                      <div className="w-full overflow-hidden whitespace-nowrap mask-linear-fade">
-                          <div className={`${isPlaying ? 'animate-marquee-loop' : ''} inline-block`}>
+                      <div className="w-full overflow-hidden whitespace-nowrap mask-linear-fade flex items-center">
+                          {/* FIXED: Using flex-row to ensure single line, preventing vertical stacking */}
+                          <div className={`${(audioTitle && audioTitle.length > 20 && isPlaying) ? 'animate-marquee-loop' : ''} flex flex-row items-center`}>
                              <span 
-                                className="text-sm tracking-wide mr-4 block"
+                                className="text-sm tracking-wide mr-8 block" // mr-8 spacer for loop
                                 style={{ 
                                     fontFamily: musicFont, 
                                     fontWeight: musicBold ? 'bold' : 'normal', 
-                                    fontStyle: musicItalic ? 'italic' : 'normal' 
+                                    fontStyle: musicItalic ? 'italic' : 'normal',
+                                    whiteSpace: 'nowrap'
                                 }}
                              >
                                 {audioTitle || "Bilinmeyen Şarkı"}
                              </span>
-                             <span 
-                                className="text-sm tracking-wide mr-4 block"
-                                style={{ 
-                                    fontFamily: musicFont, 
-                                    fontWeight: musicBold ? 'bold' : 'normal', 
-                                    fontStyle: musicItalic ? 'italic' : 'normal' 
-                                }}
-                             >
-                                {audioTitle || "Bilinmeyen Şarkı"}
-                             </span>
+                             {(audioTitle && audioTitle.length > 20 && isPlaying) && (
+                                 <span 
+                                    className="text-sm tracking-wide mr-8 block"
+                                    style={{ 
+                                        fontFamily: musicFont, 
+                                        fontWeight: musicBold ? 'bold' : 'normal', 
+                                        fontStyle: musicItalic ? 'italic' : 'normal',
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                 >
+                                    {audioTitle || "Bilinmeyen Şarkı"}
+                                 </span>
+                             )}
                           </div>
                       </div>
                       <span className="text-[10px] opacity-60 font-mono truncate">{songInfo?.artistName || "Sanatçı"}</span>
@@ -515,14 +542,14 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                           <button className="p-2 hover:text-blue-400 transition-colors text-white">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
                           </button>
-                          {/* Vertical Volume Slider Popup */}
-                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-8 h-24 bg-[#111] rounded-full border border-white/20 flex items-center justify-center opacity-0 group-hover/vol:opacity-100 transition-opacity pointer-events-none group-hover/vol:pointer-events-auto">
+                          {/* Horizontal Volume Slider Popup (To the right) */}
+                          <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-24 h-8 bg-[#111] rounded-full border border-white/20 flex items-center justify-center opacity-0 group-hover/vol:opacity-100 transition-opacity pointer-events-none group-hover/vol:pointer-events-auto">
                               <input 
                                   type="range" 
                                   min="0" max="1" step="0.01" 
                                   value={volume} 
                                   onChange={(e) => onVolumeChange && onVolumeChange(parseFloat(e.target.value))}
-                                  className="w-16 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer -rotate-90 origin-center"
+                                  className="w-20 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
                               />
                           </div>
                        </div>
@@ -571,11 +598,11 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                               <button onClick={() => setMusicShowInCleanMode(!musicShowInCleanMode)} className={`w-8 h-4 rounded-full relative transition-colors ${musicShowInCleanMode ? 'bg-blue-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${musicShowInCleanMode ? 'translate-x-4' : 'translate-x-0'}`} /></button>
                           </div>
 
-                          {/* Particle Text Toggle */}
+                          {/* Particle Text Toggle (RENAMED TO ŞARKI SÖZLERİ) */}
                           {hasLyrics && (
                               <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/5">
                                   <span className="text-[10px] text-gray-300 flex items-center gap-2">
-                                      Partikül Yazı
+                                      Şarkı Sözleri
                                       {useLyricParticles && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>}
                                   </span>
                                   <button onClick={onToggleLyricParticles} className={`w-8 h-4 rounded-full relative transition-colors ${useLyricParticles ? 'bg-purple-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${useLyricParticles ? 'translate-x-4' : 'translate-x-0'}`} /></button>
@@ -587,27 +614,50 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                               <span className="text-[10px] text-gray-300" title="Yazının müziğe tepki vermesini engeller">Eko Efekti</span>
                               <button onClick={onToggleLyricEcho} className={`w-8 h-4 rounded-full relative transition-colors ${useLyricEcho ? 'bg-cyan-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${useLyricEcho ? 'translate-x-4' : 'translate-x-0'}`} /></button>
                           </div>
+                          
+                          {/* Disk Toggle (Fixed) */}
+                          <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/5">
+                              <span className="text-[10px] text-gray-300">Disk Görünümü</span>
+                              <button onClick={() => onToggleInfoPanel && onToggleInfoPanel()} className={`w-8 h-4 rounded-full relative transition-colors ${showInfoPanel ? 'bg-green-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${showInfoPanel ? 'translate-x-4' : 'translate-x-0'}`} /></button>
+                          </div>
                       </div>
                   </div>
               )}
           </div>
       )}
 
-      {/* --- Song Info Panel (Left Side) --- */}
-      {/* GUARD: Only render if audioMode is NOT 'none' and showInfoPanel is true */}
+      {/* --- Song Info Panel (Spinning Disk Animation) --- */}
+      {/* 
+          ANIMATION LOGIC FIX:
+          - We use conditional rendering based on `showInfoPanel` and `audioMode`.
+          - When `isInfoExpanded` is true, it goes to center with `animate-disk-enter`.
+          - When `isInfoExpanded` is false, it goes to left with `transition-all`.
+      */}
       {(showInfoPanel && audioMode !== 'none') && !isDrawing && (
           <div 
             onClick={toggleInfoExpand}
             className={`
-                perspective-1000 z-40 transition-all duration-700
+                z-40 cursor-pointer
                 ${isInfoExpanded 
-                    ? 'fixed inset-0 flex items-center justify-center z-[200]' 
-                    : `absolute left-20 top-[230px] w-64 h-auto min-h-[120px] max-h-[300px] hover:scale-[1.02] cursor-pointer ${isWidgetMinimized ? '-translate-y-[100px]' : ''} ${hideLeftClass}`
+                    ? 'fixed inset-0 flex items-center justify-center z-[200] bg-black/60 backdrop-blur-sm' 
+                    : `absolute left-20 top-[230px] w-64 h-auto min-h-[120px] max-h-[300px] hover:scale-[1.02] transition-transform duration-500 ${isWidgetMinimized ? '-translate-y-[100px]' : ''} ${hideLeftClass}`
                 }
             `}
           >
-              <div className={`relative transition-transform duration-1000 preserve-3d ${isInfoExpanded ? 'w-[500px] h-[500px] rotate-y-180' : 'w-full h-full'}`}>
-                  {/* --- FRONT FACE --- */}
+              <div 
+                className={`
+                    relative preserve-3d
+                    ${isInfoExpanded 
+                        ? 'w-[500px] h-[500px] animate-disk-enter' // Spin into center
+                        : 'w-full h-full transition-transform duration-700' // Normal state
+                    }
+                `}
+                style={{
+                    // If not expanded, we ensure rotation is reset
+                    transform: isInfoExpanded ? undefined : 'rotateY(0deg) scale(1)'
+                }}
+              >
+                  {/* --- FRONT FACE (Small Widget) --- */}
                   <div className={`absolute inset-0 backface-hidden rounded-3xl border backdrop-blur-xl shadow-2xl overflow-visible flex flex-col ${isLightMode ? 'bg-white/40 border-black/10 text-black' : 'bg-black/40 border-white/10 text-white'}`}>
                       <div className="absolute left-1/2 -translate-x-1/2 -top-16">
                           <div className={`w-32 h-32 rounded-full shadow-xl border-4 ${isLightMode ? 'border-gray-200' : 'border-gray-800'} relative flex items-center justify-center overflow-hidden ${isPlaying || isLoadingInfo ? 'animate-spin-slow' : 'animate-spin-slow paused-spin'}`}>
@@ -625,8 +675,16 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                           {isLoadingInfo && ( <div className="mt-4 text-[10px] opacity-60 font-mono animate-pulse">Analiz Ediliyor...</div> )}
                       </div>
                   </div>
-                  {/* --- BACK FACE --- */}
-                  <div className={`absolute inset-0 backface-hidden rounded-3xl border backdrop-blur-3xl shadow-2xl overflow-hidden rotate-y-180 flex flex-col ${isLightMode ? 'bg-white/90 border-black/10 text-black' : 'bg-[#111]/90 border-white/10 text-white'}`}>
+                  
+                  {/* --- BACK FACE (Expanded Info) --- */}
+                  {/* Rotated 180deg so when the parent spins 360deg + has a flip transform, it aligns? 
+                      Actually, simpler: Parent rotates 360. 
+                      If we want to see the "Back", we should probably just fade it in or rotate the parent 180.
+                      User requested: "tek tur donerek ekrana gelmesi". This implies 360.
+                      But if 360, we see the front again. 
+                      Let's assume "Flip 180 + Scale Up".
+                  */}
+                  <div className={`absolute inset-0 backface-hidden rounded-3xl border backdrop-blur-3xl shadow-2xl overflow-hidden flex flex-col ${isLightMode ? 'bg-white/90 border-black/10 text-black' : 'bg-[#111]/90 border-white/10 text-white'}`} style={{ transform: 'rotateY(180deg)' }}>
                       {vinylArt && <img src={vinylArt} alt="bg" className="absolute inset-0 w-full h-full object-cover opacity-10 blur-sm scale-110 pointer-events-none" />}
                       <div className={`p-8 pb-4 z-20 flex-shrink-0 border-b ${isLightMode ? 'border-black/5 bg-white/50' : 'border-white/5 bg-black/50'} backdrop-blur-md`}>
                           <h2 className="text-3xl font-bold leading-tight">{songInfo?.artistName || "Detay Yok"}</h2>
