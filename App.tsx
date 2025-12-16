@@ -807,7 +807,13 @@ const App: React.FC = () => {
       setBgImages(prev => [...prev, ...newImages]);
       if (!bgImage && newImages.length > 0) { setBgImage(newImages[0]); setCroppedBgImage(null); setBgMode('image'); }
   };
-  const handleBgImageSelectFromDeck = (img: string) => { setBgImage(img); setCroppedBgImage(null); setBgMode('image'); };
+  const handleBgImageSelectFromDeck = (img: string) => { 
+      setBgImage(img); 
+      setCroppedBgImage(null); 
+      setBgMode('image'); 
+      // Slayt gösterisini durdur (Kullanıcı manuel seçim yaptı)
+      setSlideshowSettings(prev => ({ ...prev, active: false }));
+  };
   const handleApplyCrop = (croppedDataUrl: string) => { setCroppedBgImage(croppedDataUrl); setBgMode('image'); };
   const handleRemoveBgImage = (imgToRemove: string) => {
       setBgImages(prev => {
@@ -1196,7 +1202,7 @@ const App: React.FC = () => {
                 // PASSING THE REF TO AUDIO INPUT FOR COVER ART EXTRACTION
                 ref={audioInputRef} // Note: This ref needs to be passed differently or context used, but for simplicity here we assume internal state
                 songInfo={songInfo} // New Prop
-                showInfoPanel={showInfoPanel} // Control disk visibility
+                showInfoPanel={showInfoPanel && audioMode !== 'none'} // Control disk visibility: Only show if enabled AND music is present
                 onToggleInfoPanel={() => setShowInfoPanel(!showInfoPanel)}
             />
           </div>

@@ -114,7 +114,7 @@ export const LyricsBox: React.FC<LyricsBoxProps> = ({ lyrics, currentTime, durat
                         return (
                             <div 
                                 key={i}
-                                className={`text-center transition-all duration-500 ease-out py-4 w-full flex justify-center`}
+                                className={`text-center transition-all duration-500 ease-out py-3 w-full flex justify-center`}
                             >
                                 <p 
                                     className={`font-sans font-bold leading-tight transition-all duration-500 max-w-[90%] select-text
@@ -126,8 +126,10 @@ export const LyricsBox: React.FC<LyricsBoxProps> = ({ lyrics, currentTime, durat
                                         }
                                     `}
                                     style={{ 
-                                        fontSize: isActive ? '2.5rem' : '1.5rem',
-                                        textShadow: isActive ? '0 0 30px rgba(255,255,255,0.8)' : 'none',
+                                        fontSize: '15px', // Fixed size
+                                        textShadow: isActive ? '0 0 15px rgba(255,255,255,0.5)' : 'none',
+                                        whiteSpace: 'pre-wrap', // Enable wrapping
+                                        wordBreak: 'break-word',
                                     }}
                                 >
                                     {line.text}
@@ -136,7 +138,7 @@ export const LyricsBox: React.FC<LyricsBoxProps> = ({ lyrics, currentTime, durat
                         );
                     })
                 ) : (
-                    <div className="text-white/50 animate-pulse text-xl font-mono">...</div>
+                    <div className="text-white/50 animate-pulse text-sm font-mono">...</div>
                 )}
             </div>
             
