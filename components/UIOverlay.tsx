@@ -320,7 +320,10 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
   const [musicBold, setMusicBold] = useState(false);
   const [musicItalic, setMusicItalic] = useState(false);
 
+  // Info Panel Animation States
   const [isInfoExpanded, setIsInfoExpanded] = useState(false);
+  const [isInfoClosing, setIsInfoClosing] = useState(false);
+
   const [userDeckIndex, setUserDeckIndex] = useState(0);
   const [aiDeckIndex, setAiDeckIndex] = useState(0);
   const [deckShowSettings, setDeckShowSettings] = useState(false);
@@ -351,7 +354,16 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
 
   const closeAllMenus = () => {
     setIsSettingsOpen(false); setIsThemeMenuOpen(false); setIsShapeMenuOpen(false); setIsBgPaletteOpen(false); setIsPaletteOpen(false); setShowMusicSettings(false); setDeckShowSettings(false); setShowResetMenu(false); setShowSlideshowPanel(false); 
-    if (isInfoExpanded) setIsInfoExpanded(false); 
+    
+    // Close Disk if expanded
+    if (isInfoExpanded) {
+        setIsInfoClosing(true);
+        setTimeout(() => {
+            setIsInfoExpanded(false);
+            setIsInfoClosing(false);
+        }, 700);
+    }
+    
     onInteractionEnd();
   };
 
@@ -406,12 +418,26 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
 
   const toggleInfoExpand = (e: React.MouseEvent) => {
       e.stopPropagation();
-      setIsInfoExpanded(!isInfoExpanded);
+      if(isInfoExpanded) {
+          setIsInfoClosing(true);
+          setTimeout(() => {
+              setIsInfoExpanded(false);
+              setIsInfoClosing(false);
+          }, 700);
+      } else {
+          setIsInfoExpanded(true);
+      }
   };
 
   const handleInfoBackdropClick = (e: React.MouseEvent) => {
       e.stopPropagation();
-      if(isInfoExpanded) setIsInfoExpanded(false);
+      if(isInfoExpanded) {
+          setIsInfoClosing(true);
+          setTimeout(() => {
+              setIsInfoExpanded(false);
+              setIsInfoClosing(false);
+          }, 700);
+      }
   };
 
   return (
@@ -456,32 +482,42 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
         .animate-marquee-loop { animation: marquee-loop 15s linear infinite; display: flex; width: max-content; }
         .mask-linear-fade { mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent); WebkitMaskImage: linear-gradient(to right, transparent, black 10%, black 90%, transparent); }
         
-        /* Disk Entry Animation (Spin + Scale) */
-        @keyframes spin-enter { 
-            0% { transform: rotateY(0deg) scale(0.2); opacity: 0; } 
-            100% { transform: rotateY(360deg) scale(1); opacity: 1; } 
+        /* 
+           Coin Flip Animation (Move + Spin 540 degrees)
+           Starts from sidebar position (approx left:5rem/80px, top:230px relative to viewport)
+           Ends at Center (0,0 relative to fixed centering)
+           
+           Viewport Center is 50vw, 50vh.
+           Start X relative to center: 5rem - 50vw (approx -45vw)
+           Start Y relative to center: 230px - 50vh
+        */
+        @keyframes coin-flip-enter { 
+            0% { transform: translate(calc(5rem - 50vw + 4rem), calc(230px - 50vh + 30px)) scale(0.3) rotateY(0deg); opacity: 1; } 
+            100% { transform: translate(0, 0) scale(1) rotateY(540deg); opacity: 1; } 
         }
-        .animate-disk-enter { animation: spin-enter 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+        .animate-coin-flip-enter { animation: coin-flip-enter 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
         
-        /* Disk Exit Animation (Reverse Spin + Scale) */
-        @keyframes spin-exit {
-            0% { transform: rotateY(360deg) scale(1); opacity: 1; }
-            100% { transform: rotateY(0deg) scale(0.2); opacity: 0; }
+        /* Reverse Coin Flip (Center to Sidebar) */
+        @keyframes coin-flip-exit {
+            0% { transform: translate(0, 0) scale(1) rotateY(540deg); opacity: 1; }
+            100% { transform: translate(calc(5rem - 50vw + 4rem), calc(230px - 50vh + 30px)) scale(0.3) rotateY(0deg); opacity: 1; }
         }
-        .animate-disk-exit { animation: spin-exit 0.6s cubic-bezier(0.32, 0, 0.67, 0) forwards; }
+        .animate-coin-flip-exit { animation: coin-flip-exit 0.6s cubic-bezier(0.32, 0, 0.67, 0) forwards; }
       `}</style>
       
       {isAnyMenuOpen && ( <div className="fixed inset-0 z-40 bg-transparent" onPointerDown={closeAllMenus} /> )}
-      {isInfoExpanded && ( <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm" onClick={handleInfoBackdropClick} /> )}
+      
+      {/* Backdrop for Expanded Disk */}
+      {(isInfoExpanded || isInfoClosing) && ( <div className={`fixed inset-0 z-[150] bg-black/20 backdrop-blur-0 transition-opacity duration-700 ${isInfoClosing ? 'opacity-0' : 'opacity-100'}`} onClick={handleInfoBackdropClick} /> )}
 
       <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
       <input type="file" accept="audio/*" ref={actualAudioInputRef} onChange={handleAudioSelect} className="hidden" />
       <input type="file" accept="image/*" multiple ref={bgImageInputRef} onChange={handleBgImagesSelect} className="hidden" />
 
       {/* --- MÜZİK ÇALAR WIDGET (TOP CENTER) - Fixed --- */}
-      {(audioMode !== 'none' && !isUIHidden && !isDrawing) && (
+      {(audioMode !== 'none' && (!isUIHidden || musicShowInCleanMode) && !isDrawing) && (
           <div 
-              className={`absolute top-6 left-1/2 -translate-x-1/2 z-[60] transition-all duration-500 ${isWidgetMinimized ? '-translate-y-[200%]' : (musicShowInCleanMode ? 'translate-y-0' : (isUIHidden ? '-translate-y-[200%]' : 'translate-y-0'))}`}
+              className={`absolute top-6 left-1/2 -translate-x-1/2 z-[60] transition-all duration-500 ${isWidgetMinimized ? '-translate-y-[200%]' : 'translate-y-0'}`}
               onMouseEnter={() => { onInteractionStart(); setShowVolumeControl(true); }}
               onMouseLeave={() => { onInteractionEnd(); setShowVolumeControl(false); setShowMusicSettings(false); }}
           >
@@ -504,8 +540,8 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                   {/* Song Title (Marquee) & Artist */}
                   <div className="flex flex-col w-40 overflow-hidden relative">
                       <div className="w-full overflow-hidden whitespace-nowrap mask-linear-fade flex items-center">
-                          {/* FIXED: Using flex-row to ensure single line, preventing vertical stacking */}
-                          <div className={`${(audioTitle && audioTitle.length > 20 && isPlaying) ? 'animate-marquee-loop' : ''} flex flex-row items-center`}>
+                          {/* Fixed: Always animate if length > 20, regardless of isPlaying */}
+                          <div className={`${(audioTitle && audioTitle.length > 20) ? 'animate-marquee-loop' : ''} flex flex-row items-center`}>
                              <span 
                                 className="text-sm tracking-wide mr-8 block" // mr-8 spacer for loop
                                 style={{ 
@@ -517,7 +553,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                              >
                                 {audioTitle || "Bilinmeyen Şarkı"}
                              </span>
-                             {(audioTitle && audioTitle.length > 20 && isPlaying) && (
+                             {(audioTitle && audioTitle.length > 20) && (
                                  <span 
                                     className="text-sm tracking-wide mr-8 block"
                                     style={{ 
@@ -543,14 +579,16 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
                           </button>
                           {/* Horizontal Volume Slider Popup (To the right) */}
-                          <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-24 h-8 bg-[#111] rounded-full border border-white/20 flex items-center justify-center opacity-0 group-hover/vol:opacity-100 transition-opacity pointer-events-none group-hover/vol:pointer-events-auto">
-                              <input 
-                                  type="range" 
-                                  min="0" max="1" step="0.01" 
-                                  value={volume} 
-                                  onChange={(e) => onVolumeChange && onVolumeChange(parseFloat(e.target.value))}
-                                  className="w-20 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
-                              />
+                          <div className="absolute left-full top-1/2 -translate-y-1/2 pl-4 w-32 h-10 flex items-center opacity-0 group-hover/vol:opacity-100 transition-opacity pointer-events-none group-hover/vol:pointer-events-auto">
+                              <div className="bg-[#111] rounded-full border border-white/20 px-3 py-1 flex items-center">
+                                <input 
+                                    type="range" 
+                                    min="0" max="1" step="0.01" 
+                                    value={volume} 
+                                    onChange={(e) => onVolumeChange && onVolumeChange(parseFloat(e.target.value))}
+                                    className="w-20 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
+                                />
+                              </div>
                           </div>
                        </div>
 
@@ -598,16 +636,14 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                               <button onClick={() => setMusicShowInCleanMode(!musicShowInCleanMode)} className={`w-8 h-4 rounded-full relative transition-colors ${musicShowInCleanMode ? 'bg-blue-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${musicShowInCleanMode ? 'translate-x-4' : 'translate-x-0'}`} /></button>
                           </div>
 
-                          {/* Particle Text Toggle (RENAMED TO ŞARKI SÖZLERİ) */}
-                          {hasLyrics && (
-                              <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/5">
-                                  <span className="text-[10px] text-gray-300 flex items-center gap-2">
-                                      Şarkı Sözleri
-                                      {useLyricParticles && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>}
-                                  </span>
-                                  <button onClick={onToggleLyricParticles} className={`w-8 h-4 rounded-full relative transition-colors ${useLyricParticles ? 'bg-purple-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${useLyricParticles ? 'translate-x-4' : 'translate-x-0'}`} /></button>
-                              </div>
-                          )}
+                          {/* Particle Text Toggle (ALWAYS VISIBLE) */}
+                          <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/5">
+                              <span className="text-[10px] text-gray-300 flex items-center gap-2">
+                                  Şarkı Sözleri
+                                  {useLyricParticles && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>}
+                              </span>
+                              <button onClick={onToggleLyricParticles} className={`w-8 h-4 rounded-full relative transition-colors ${useLyricParticles ? 'bg-purple-600' : 'bg-white/10'}`}><div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${useLyricParticles ? 'translate-x-4' : 'translate-x-0'}`} /></button>
+                          </div>
 
                           {/* Echo Toggle */}
                           <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/5">
@@ -629,17 +665,18 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
       {/* --- Song Info Panel (Spinning Disk Animation) --- */}
       {/* 
           ANIMATION LOGIC FIX:
-          - We use conditional rendering based on `showInfoPanel` and `audioMode`.
-          - When `isInfoExpanded` is true, it goes to center with `animate-disk-enter`.
-          - When `isInfoExpanded` is false, it goes to left with `transition-all`.
+          - Uses Coin Flip (540deg) for entering (Move + Spin).
+          - Uses Reverse Coin Flip (540 -> 0) for exiting.
+          - 540deg % 360deg = 180deg (So it ends up showing the BACK face).
+          - Back face is rotated 180deg, so 180+180=360=0 (Faces camera).
       */}
       {(showInfoPanel && audioMode !== 'none') && !isDrawing && (
           <div 
             onClick={toggleInfoExpand}
             className={`
                 z-40 cursor-pointer
-                ${isInfoExpanded 
-                    ? 'fixed inset-0 flex items-center justify-center z-[200] bg-black/60 backdrop-blur-sm' 
+                ${(isInfoExpanded || isInfoClosing)
+                    ? 'fixed inset-0 flex items-center justify-center z-[200]' 
                     : `absolute left-20 top-[230px] w-64 h-auto min-h-[120px] max-h-[300px] hover:scale-[1.02] transition-transform duration-500 ${isWidgetMinimized ? '-translate-y-[100px]' : ''} ${hideLeftClass}`
                 }
             `}
@@ -647,14 +684,16 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
               <div 
                 className={`
                     relative preserve-3d
-                    ${isInfoExpanded 
-                        ? 'w-[500px] h-[500px] animate-disk-enter' // Spin into center
-                        : 'w-full h-full transition-transform duration-700' // Normal state
+                    ${isInfoExpanded && !isInfoClosing
+                        ? 'w-[500px] h-[500px] animate-coin-flip-enter' // Spin 540deg
+                        : isInfoClosing 
+                            ? 'w-[500px] h-[500px] animate-coin-flip-exit' // Reverse spin
+                            : 'w-full h-full transition-transform duration-700' // Normal state
                     }
                 `}
                 style={{
                     // If not expanded, we ensure rotation is reset
-                    transform: isInfoExpanded ? undefined : 'rotateY(0deg) scale(1)'
+                    transform: (isInfoExpanded || isInfoClosing) ? undefined : 'rotateY(0deg) scale(1)'
                 }}
               >
                   {/* --- FRONT FACE (Small Widget) --- */}
@@ -666,24 +705,31 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                               <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-white/20 to-transparent pointer-events-none"></div>
                           </div>
                       </div>
-                      <div className="pt-20 px-4 pb-4 flex flex-col items-center justify-start flex-grow">
-                          <div className="text-center w-full mt-1">
-                              <h3 className={`font-bold leading-tight tracking-tight drop-shadow-sm text-lg line-clamp-2 ${isLoadingInfo ? 'animate-pulse opacity-50' : ''}`}>{songInfo ? songInfo.artistName : "Analiz Bekleniyor..."}</h3>
+                      <div className="pt-14 px-3 pb-3 flex flex-col items-center justify-start flex-grow overflow-hidden">
+                          <div className="text-center w-full mt-1 mb-2">
+                              <h3 className={`font-bold leading-tight tracking-tight drop-shadow-sm text-lg line-clamp-1 ${isLoadingInfo ? 'animate-pulse opacity-50' : ''}`}>{songInfo ? songInfo.artistName : "Analiz Bekleniyor..."}</h3>
                               {songInfo && !isUnknownArtist && !isLoadingInfo && ( <p className="opacity-70 font-mono text-[10px] mt-1">{songInfo.artistBio}</p> )}
                           </div>
-                          {songInfo && !isLoadingInfo && ( <> <div className={`h-px w-2/3 mx-auto my-3 flex-shrink-0 ${isLightMode ? 'bg-black/10' : 'bg-white/10'}`}></div> <div className="text-left w-full mb-1 flex flex-col gap-2"> <div> <span className="font-bold opacity-50 uppercase tracking-widest block mb-0.5 text-[9px]">Şarkı Analizi</span> <p className="leading-snug opacity-90 italic text-[11px] line-clamp-4 break-words">"{songInfo.meaningTR}"</p> </div> </div> {songInfo.isAiGenerated && ( <div className="pt-2 mt-auto self-center"> <span className="inline-block px-2 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30">AI ANALİZİ</span> </div> )} </> )}
+                          
+                          {/* PREVIEW TEXT (Front Face) - Better line-height & clamping */}
+                          {songInfo && !isLoadingInfo && ( 
+                              <div className="w-full px-1 flex flex-col gap-2">
+                                  <div className={`text-[10px] leading-tight opacity-90 italic line-clamp-3 text-center`}>
+                                      <span className="font-bold not-italic opacity-60 text-[9px] mr-1 block mb-0.5">TR:</span>
+                                      "{songInfo.meaningTR}"
+                                  </div>
+                                  <div className={`text-[10px] leading-tight opacity-70 italic line-clamp-3 text-center`}>
+                                      <span className="font-bold not-italic opacity-60 text-[9px] mr-1 block mb-0.5">EN:</span>
+                                      "{songInfo.meaningEN}"
+                                  </div>
+                              </div>
+                          )}
+                          
                           {isLoadingInfo && ( <div className="mt-4 text-[10px] opacity-60 font-mono animate-pulse">Analiz Ediliyor...</div> )}
                       </div>
                   </div>
                   
                   {/* --- BACK FACE (Expanded Info) --- */}
-                  {/* Rotated 180deg so when the parent spins 360deg + has a flip transform, it aligns? 
-                      Actually, simpler: Parent rotates 360. 
-                      If we want to see the "Back", we should probably just fade it in or rotate the parent 180.
-                      User requested: "tek tur donerek ekrana gelmesi". This implies 360.
-                      But if 360, we see the front again. 
-                      Let's assume "Flip 180 + Scale Up".
-                  */}
                   <div className={`absolute inset-0 backface-hidden rounded-3xl border backdrop-blur-3xl shadow-2xl overflow-hidden flex flex-col ${isLightMode ? 'bg-white/90 border-black/10 text-black' : 'bg-[#111]/90 border-white/10 text-white'}`} style={{ transform: 'rotateY(180deg)' }}>
                       {vinylArt && <img src={vinylArt} alt="bg" className="absolute inset-0 w-full h-full object-cover opacity-10 blur-sm scale-110 pointer-events-none" />}
                       <div className={`p-8 pb-4 z-20 flex-shrink-0 border-b ${isLightMode ? 'border-black/5 bg-white/50' : 'border-white/5 bg-black/50'} backdrop-blur-md`}>
@@ -691,7 +737,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                           {songInfo && !isUnknownArtist && <p className="font-mono text-sm opacity-60 mt-1">{songInfo.artistBio}</p>}
                       </div>
                       <div className="flex-1 p-8 pt-6 overflow-y-auto custom-thin-scrollbar relative z-10">
-                          {songInfo ? ( <div className="space-y-8"> <div> <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block">Şarkı Analizi (TR)</h4> <p className="text-lg leading-relaxed italic opacity-90">{songInfo.meaningTR}</p> </div> <div> <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block">Analysis (EN)</h4> <p className="text-lg leading-relaxed italic opacity-80">{songInfo.meaningEN}</p> </div> </div> ) : <p className="opacity-50">Henüz analiz verisi yok.</p>}
+                          {songInfo ? ( <div className="space-y-8"> <div> <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block uppercase tracking-wider">Şarkı Analizi (TR)</h4> <p className="text-lg leading-relaxed italic opacity-90">{songInfo.meaningTR}</p> </div> <div> <h4 className="font-bold text-lg mb-2 opacity-80 border-b border-current pb-1 inline-block uppercase tracking-wider">Analysis (EN)</h4> <p className="text-lg leading-relaxed italic opacity-80">{songInfo.meaningEN}</p> </div> </div> ) : <p className="opacity-50">Henüz analiz verisi yok.</p>}
                           <div className="mt-8 pt-8 border-t border-dashed border-opacity-20 border-gray-500 text-center opacity-50 text-xs">Yapay Zeka tarafından analiz edilmiştir.</div>
                       </div>
                   </div>
