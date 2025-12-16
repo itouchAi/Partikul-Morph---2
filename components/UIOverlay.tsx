@@ -483,7 +483,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
         .mask-linear-fade { mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent); WebkitMaskImage: linear-gradient(to right, transparent, black 10%, black 90%, transparent); }
         
         /* 
-           Coin Flip Animation (Move + Spin 540 degrees)
+           Coin Flip Animation (Move + Spin 180 degrees)
            Starts from sidebar position (approx left:5rem/80px, top:230px relative to viewport)
            Ends at Center (0,0 relative to fixed centering)
            
@@ -493,13 +493,13 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
         */
         @keyframes coin-flip-enter { 
             0% { transform: translate(calc(5rem - 50vw + 4rem), calc(230px - 50vh + 30px)) scale(0.3) rotateY(0deg); opacity: 1; } 
-            100% { transform: translate(0, 0) scale(1) rotateY(540deg); opacity: 1; } 
+            100% { transform: translate(0, 0) scale(1) rotateY(180deg); opacity: 1; } 
         }
         .animate-coin-flip-enter { animation: coin-flip-enter 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
         
         /* Reverse Coin Flip (Center to Sidebar) */
         @keyframes coin-flip-exit {
-            0% { transform: translate(0, 0) scale(1) rotateY(540deg); opacity: 1; }
+            0% { transform: translate(0, 0) scale(1) rotateY(180deg); opacity: 1; }
             100% { transform: translate(calc(5rem - 50vw + 4rem), calc(230px - 50vh + 30px)) scale(0.3) rotateY(0deg); opacity: 1; }
         }
         .animate-coin-flip-exit { animation: coin-flip-exit 0.6s cubic-bezier(0.32, 0, 0.67, 0) forwards; }
@@ -665,9 +665,9 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
       {/* --- Song Info Panel (Spinning Disk Animation) --- */}
       {/* 
           ANIMATION LOGIC FIX:
-          - Uses Coin Flip (540deg) for entering (Move + Spin).
-          - Uses Reverse Coin Flip (540 -> 0) for exiting.
-          - 540deg % 360deg = 180deg (So it ends up showing the BACK face).
+          - Uses Coin Flip (180deg) for entering (Move + Spin).
+          - Uses Reverse Coin Flip (180 -> 0) for exiting.
+          - 180deg (So it ends up showing the BACK face).
           - Back face is rotated 180deg, so 180+180=360=0 (Faces camera).
       */}
       {(showInfoPanel && audioMode !== 'none') && !isDrawing && (
@@ -677,7 +677,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                 z-40 cursor-pointer
                 ${(isInfoExpanded || isInfoClosing)
                     ? 'fixed inset-0 flex items-center justify-center z-[200]' 
-                    : `absolute left-20 top-[230px] w-64 h-auto min-h-[120px] max-h-[300px] hover:scale-[1.02] transition-transform duration-500 ${isWidgetMinimized ? '-translate-y-[100px]' : ''} ${hideLeftClass}`
+                    : `absolute left-20 top-[230px] w-64 h-auto min-h-[220px] max-h-[350px] hover:scale-[1.02] transition-transform duration-500 ${isWidgetMinimized ? '-translate-y-[100px]' : ''} ${hideLeftClass}`
                 }
             `}
           >
@@ -685,7 +685,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                 className={`
                     relative preserve-3d
                     ${isInfoExpanded && !isInfoClosing
-                        ? 'w-[500px] h-[500px] animate-coin-flip-enter' // Spin 540deg
+                        ? 'w-[500px] h-[500px] animate-coin-flip-enter' // Spin 180deg
                         : isInfoClosing 
                             ? 'w-[500px] h-[500px] animate-coin-flip-exit' // Reverse spin
                             : 'w-full h-full transition-transform duration-700' // Normal state
@@ -705,7 +705,7 @@ export const UIOverlay = forwardRef<HTMLInputElement, UIOverlayProps>(({
                               <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-white/20 to-transparent pointer-events-none"></div>
                           </div>
                       </div>
-                      <div className="pt-14 px-3 pb-3 flex flex-col items-center justify-start flex-grow overflow-hidden">
+                      <div className="pt-24 px-3 pb-3 flex flex-col items-center justify-start flex-grow overflow-hidden">
                           <div className="text-center w-full mt-1 mb-2">
                               <h3 className={`font-bold leading-tight tracking-tight drop-shadow-sm text-lg line-clamp-1 ${isLoadingInfo ? 'animate-pulse opacity-50' : ''}`}>{songInfo ? songInfo.artistName : "Analiz Bekleniyor..."}</h3>
                               {songInfo && !isUnknownArtist && !isLoadingInfo && ( <p className="opacity-70 font-mono text-[10px] mt-1">{songInfo.artistBio}</p> )}
